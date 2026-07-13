@@ -47,6 +47,46 @@ Notas:
 
 ## Uso
 
+### 0) Monitor Pokémon 30th ETB (sin compra automática)
+
+Este flujo revisa `https://www.amazon.com.mx/dp/B0H78BB9TY` y solo manda alerta por Telegram si:
+
+- el producto está disponible o en preventa,
+- el precio es menor o igual a `POKEMON_TARGET_PRICE`,
+- vende Amazon México,
+- envía Amazon México,
+- el estado cambió desde la última alerta.
+
+Configura en `.env`:
+
+```env
+POKEMON_ASIN=B0H78BB9TY
+POKEMON_TARGET_PRICE=1300
+POKEMON_ALERT_STATE_FILE=.pokemon-alert-state.json
+
+TELEGRAM_BOT_TOKEN=tu_token_de_bot
+TELEGRAM_CHAT_ID=tu_chat_id
+```
+
+Prueba Telegram sin consultar Amazon:
+
+```bash
+pnpm telegram:test
+```
+
+Ejecuta el monitor:
+
+```bash
+pnpm monitor:pokemon
+```
+
+Notas:
+
+- No compra, no agrega al carrito y no hace checkout.
+- Guarda el último estado en `.pokemon-alert-state.json` para no repetir la misma alerta.
+- Si Amazon devuelve CAPTCHA, bloqueo o una página incompleta, guarda el HTML en `diagnostics/`.
+- Este flujo no requiere Turso ni Decodo para la primera prueba manual.
+
 ### 1) Ejecutar tracking por API (recomendado)
 
 ```bash

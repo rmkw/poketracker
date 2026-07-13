@@ -12,7 +12,9 @@
     "astro": "astro",
     "track": "tsx src/tracker/index.ts",
     "track:manual": "tsx src/tracker/manual-scraper.ts",
-    "track:proxy": "tsx src/tracker/proxy-scraper.ts"
+    "track:proxy": "tsx src/tracker/proxy-scraper.ts",
+    "monitor:pokemon": "tsx src/tracker/pokemon-monitor.ts",
+    "telegram:test": "tsx src/tracker/test-telegram.ts"
   },
   "dependencies": {
     "@libsql/client": "0.15.15",

@@ -11,10 +11,12 @@ import {
   scrapeAmazonMxProduct,
   type AmazonMxProduct,
 } from "./amazon-mx-product.js"
-import {
-  recordPriceChange,
-} from "./price-history.js"
+import { recordPriceObservation } from "./price-history.js"
+import { recordFailedCheck, recordSuccessfulCheck } from "./monitor-stats.js"
+import { startMonitorControl } from "./monitor-control.js"
+import { readDashboardData } from "./dashboard-data.js"
 import { sendTelegramMessage } from "./telegram.js"
+import { startTelegramControl } from "./telegram-control.js"
 
 export type MonitorConfig = {
   asins: string[]
@@ -22,6 +24,10 @@ export type MonitorConfig = {
   stateFile: string
   historyFile: string
   historyLimit: number
+  statsFile: string
+  settingsFile: string
+  telegramControlStateFile: string
+  controlPort: number
   checkIntervalMinutes: number
   debug: boolean
 }
@@ -100,6 +106,10 @@ export const getMonitorConfig = (): MonitorConfig => {
     stateFile:
       process.env.POKEMON_ALERT_STATE_FILE ?? ".pokemon-alert-state.json",
     historyFile: process.env.PRICE_HISTORY_FILE ?? ".pokemon-price-history.json",
+    statsFile: process.env.MONITOR_STATS_FILE ?? ".pokemon-monitor-stats.json",
+    settingsFile: process.env.MONITOR_SETTINGS_FILE ?? ".pokemon-monitor-settings.json",
+    telegramControlStateFile: process.env.TELEGRAM_CONTROL_STATE_FILE ?? ".telegram-control-state.json",
+    controlPort: Math.floor(readPositiveNumber(process.env.MONITOR_CONTROL_PORT, 3784, "MONITOR_CONTROL_PORT")),
     historyLimit: Math.floor(
       readPositiveNumber(
         process.env.PRICE_HISTORY_LIMIT,
@@ -121,7 +131,18 @@ export const shouldAlert = (
   data.price <= targetPrice &&
   data.isAmazonSeller &&
   data.isAmazonShipper &&
-  data.hasPurchaseSignal
+   data.hasPurchaseSignal
+
+export const shouldAlertCandidate = (
+  data: AmazonMxProduct,
+  targetPrice: number,
+): boolean =>
+  data.isAvailable &&
+  data.price !== null &&
+  data.price <= targetPrice &&
+  data.hasPurchaseSignal &&
+  !data.isAmazonSeller &&
+  !data.isAmazonShipper
 
 export const buildSignature = (
   data: AmazonMxProduct,
@@ -129,6 +150,7 @@ export const buildSignature = (
 ): string =>
   JSON.stringify({
     eligible: shouldAlert(data, targetPrice),
+    candidate: shouldAlertCandidate(data, targetPrice),
     price: data.price,
     seller: normalizeSignatureValue(data.seller),
     shipper: normalizeSignatureValue(data.shipper),
@@ -147,15 +169,28 @@ export const buildMessage = (data: AmazonMxProduct): string =>
     data.url,
   ].join("\n")
 
+export const buildCandidateMessage = (data: AmazonMxProduct): string =>
+  [
+    "⚠️ Oferta Amazon México por verificar",
+    `Producto: ${data.title ?? data.asin}`,
+    `Precio detectado: ${money(data.price)}`,
+    `Vendedor: ${data.seller ?? "sin confirmar"}`,
+    `Envío: ${data.shipper ?? "sin confirmar"}`,
+    "No es una oferta confirmada por Amazon México; revisa antes de comprar.",
+    "Abrir producto:",
+    data.url,
+  ].join("\n")
+
 const logProduct = (
   data: AmazonMxProduct,
   config: MonitorConfig,
   eligible: boolean,
+  candidate: boolean,
   changed: boolean,
   alreadyAlerted: boolean,
 ): void => {
   console.log(
-    `[${data.scrapedAt}] ${data.asin} | ${money(data.price)} | ${data.availability ?? "disponibilidad no encontrada"} | alerta: ${eligible ? (alreadyAlerted ? "ya enviada" : "pendiente") : "no"}`,
+    `[${data.scrapedAt}] ${data.asin} | ${money(data.price)} | ${data.availability ?? "disponibilidad no encontrada"} | alerta: ${eligible || candidate ? (alreadyAlerted ? "ya enviada" : candidate ? "por verificar" : "pendiente") : "no"}`,
   )
 
   if (config.debug) {
@@ -174,6 +209,7 @@ const logProduct = (
         hasPurchaseSignal: data.hasPurchaseSignal,
         deliveryRestrictionDetected: data.deliveryRestrictionDetected,
         eligible,
+        candidate,
         changed,
         alreadyAlerted,
         url: data.url,
@@ -187,7 +223,9 @@ const logProduct = (
 export type CheckResult = {
   data: AmazonMxProduct
   eligible: boolean
+  candidate: boolean
   changed: boolean
+  priceChanged: boolean
   alertSent: boolean
 }
 
@@ -208,7 +246,7 @@ export const runCheck = async (
   const history =
     data.price === null
       ? { previousPrice: null, lowestPrice: null, recent: [] }
-      : await recordPriceChange(
+      : await recordPriceObservation(
           config.historyFile,
           asin,
           {
@@ -223,18 +261,30 @@ export const runCheck = async (
         )
   const signature = buildSignature(data, config.targetPrice)
   const eligible = shouldAlert(data, config.targetPrice)
+  const candidate = shouldAlertCandidate(data, config.targetPrice)
+  const alertable = eligible || candidate
   const changed = signature !== state.signature
+  const priceChanged =
+    data.price !== null && history.previousPrice !== null && history.previousPrice !== data.price
   const alreadyAlerted = state.lastAlertedSignature === signature
 
-  logProduct(data, config, eligible, changed, alreadyAlerted)
+  await recordSuccessfulCheck(
+    config.statsFile,
+    asin,
+    data.price,
+    priceChanged,
+    data.scrapedAt,
+  )
+
+  logProduct(data, config, eligible, candidate, changed, alreadyAlerted)
 
   let lastAlertedAt = state.lastAlertedAt
-  let lastAlertedSignature = eligible ? state.lastAlertedSignature : null
+  let lastAlertedSignature = alertable ? state.lastAlertedSignature : null
   let alertSent = false
 
-  if (eligible && !alreadyAlerted) {
+  if (alertable && !alreadyAlerted) {
     try {
-      await sendTelegramMessage(buildMessage(data))
+      await sendTelegramMessage(candidate ? buildCandidateMessage(data) : buildMessage(data))
       lastAlertedAt = new Date().toISOString()
       lastAlertedSignature = signature
       alertSent = true
@@ -244,7 +294,7 @@ export const runCheck = async (
         `Telegram falló; se volverá a intentar en la siguiente revisión: ${error instanceof Error ? error.message : error}`,
       )
     }
-  } else if (eligible) {
+  } else if (alertable) {
     console.log("Producto elegible, pero este estado ya fue alertado")
   } else {
     console.log("Producto revisado; todavía no cumple todas las condiciones")
@@ -257,7 +307,7 @@ export const runCheck = async (
     lastAlertedAt,
   })
 
-  return { data, eligible, changed, alertSent }
+  return { data, eligible, candidate, changed, priceChanged, alertSent }
 }
 
 const runAllChecks = async (config: MonitorConfig): Promise<CheckResult[]> => {
@@ -267,8 +317,10 @@ const runAllChecks = async (config: MonitorConfig): Promise<CheckResult[]> => {
     try {
       results.push(await runCheck(config, asin))
     } catch (error) {
+      const message = formatError(error)
+      await recordFailedCheck(config.statsFile, asin, message, new Date().toISOString())
       console.error(
-        `[${new Date().toISOString()}] ${asin}: revisión falló: ${formatError(error)}`,
+        `[${new Date().toISOString()}] ${asin}: revisión falló: ${message}`,
       )
     }
   }
@@ -280,9 +332,34 @@ const runAllChecks = async (config: MonitorConfig): Promise<CheckResult[]> => {
 const formatError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
+const sendStatusMessage = async (text: string): Promise<void> => {
+  try {
+    await sendTelegramMessage(text)
+  } catch (error) {
+    console.error(`No se pudo enviar el aviso de estado: ${formatError(error)}`)
+  }
+}
+
 const runWatchMode = async (config: MonitorConfig): Promise<void> => {
   let stopRequested = false
   let wakeWait: (() => void) | null = null
+  let checkIntervalMinutes = config.checkIntervalMinutes
+
+  const control = await startMonitorControl({
+    initialIntervalMinutes: config.checkIntervalMinutes,
+    settingsFile: config.settingsFile,
+    port: config.controlPort,
+    getDashboardData: () => readDashboardData(config.historyFile, config.statsFile),
+    onIntervalChange: (minutes) => {
+      checkIntervalMinutes = minutes
+      wakeWait?.()
+    },
+  })
+  const telegramControl = startTelegramControl({
+    stateFile: config.telegramControlStateFile,
+    getInterval: () => checkIntervalMinutes,
+    setInterval: control.setCheckIntervalMinutes,
+  })
 
   const requestStop = () => {
     stopRequested = true
@@ -292,11 +369,11 @@ const runWatchMode = async (config: MonitorConfig): Promise<void> => {
   process.once("SIGINT", requestStop)
   process.once("SIGTERM", requestStop)
 
-  console.log(
-    `Monitor continuo iniciado: ${config.asins.length} ASIN(s), cada ${config.checkIntervalMinutes} minuto(s), ${config.asins.length} consulta(s) por revisión. Presiona Ctrl+C para detenerlo.`,
-  )
-
   try {
+    await sendStatusMessage(
+      `Monitor Pokemon MX activo. Revisiones cada ${control.checkIntervalMinutes} minuto(s).`,
+    )
+
     while (!stopRequested) {
       const startedAt = Date.now()
 
@@ -310,7 +387,7 @@ const runWatchMode = async (config: MonitorConfig): Promise<void> => {
 
       if (stopRequested) break
 
-      const intervalMs = config.checkIntervalMinutes * 60_000
+      const intervalMs = checkIntervalMinutes * 60_000
       const remainingMs = Math.max(0, intervalMs - (Date.now() - startedAt))
       const nextCheckAt = new Date(Date.now() + remainingMs).toISOString()
       console.log(`Siguiente revisión: ${nextCheckAt}`)
@@ -328,7 +405,10 @@ const runWatchMode = async (config: MonitorConfig): Promise<void> => {
   } finally {
     process.removeListener("SIGINT", requestStop)
     process.removeListener("SIGTERM", requestStop)
+    telegramControl.close()
+    await control.close()
     console.log("Monitor detenido")
+    await sendStatusMessage("Monitor Pokemon MX detenido.")
   }
 }
 

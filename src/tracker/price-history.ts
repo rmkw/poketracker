@@ -85,3 +85,17 @@ export const recordPriceChange = async (
 
   return buildSummary(store[asin] ?? entries)
 }
+
+export const recordPriceObservation = async (
+  file: string,
+  asin: string,
+  entry: PriceHistoryEntry,
+  limit: number,
+): Promise<PriceHistorySummary> => {
+  const store = await readStore(file)
+  const entries = store[asin] ?? []
+  entries.push(entry)
+  store[asin] = entries.slice(-limit)
+  await writeStore(file, store)
+  return buildSummary(store[asin])
+}

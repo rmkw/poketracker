@@ -17,6 +17,9 @@ diagnostics/
 .pokemon-alert-state.json
 .pokemon-alert-state.*.json
 .pokemon-price-history.json
+.pokemon-monitor-stats.json
+.pokemon-monitor-settings.json
+.telegram-control-state.json
 
 # environment variables
 .env

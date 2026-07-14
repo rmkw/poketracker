@@ -498,7 +498,6 @@ export const scrapeAmazonMxProduct = async (
 ): Promise<AmazonMxProduct> => {
   const url = `https://www.amazon.com.mx/dp/${asin}`
   const provider = getAmazonScraperProvider()
-  console.log(`Proveedor de Amazon: ${provider}`)
   const page =
     provider === "decodo"
       ? await fetchDecodoPage(url)

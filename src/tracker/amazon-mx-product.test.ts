@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { parseAmazonMxHtml } from "./amazon-mx-product.js"
-import { buildSignature, shouldAlert } from "./pokemon-monitor.js"
+import { buildSignature, shouldAlert, shouldAlertCandidate } from "./pokemon-monitor.js"
 
 const wrap = (body: string): string => `<html><body>${body}</body></html>`
 
@@ -42,6 +42,31 @@ test("no confunde un producto agotado de un tercero con una oferta válida", () 
   assert.equal(product.isAmazonSeller, false)
   assert.equal(product.isAmazonShipper, false)
   assert.equal(shouldAlert(product, 1_300), false)
+})
+
+test("avisa una oferta por verificar cuando Amazon no es vendedor ni remitente", () => {
+  const unverified = parseAmazonMxHtml(
+    "B0H78BB9TY",
+    wrap(`
+      <span id="productTitle">Pokémon TCG</span>
+      <div id="corePriceDisplay_desktop_feature_div"><span class="a-price"><span class="a-offscreen">$1,099.00</span></span></div>
+      <div id="availability">Reserva ahora</div>
+      <input id="add-to-cart-button" />
+    `),
+  )
+  const thirdParty = parseAmazonMxHtml(
+    "B0H78BB9TY",
+    wrap(`
+      <span id="productTitle">Pokémon TCG</span>
+      <div id="corePriceDisplay_desktop_feature_div"><span class="a-price"><span class="a-offscreen">$1,099.00</span></span></div>
+      <div id="availability">Reserva ahora</div>
+      <div id="merchant-info">Vendido por Tienda Ejemplo. Enviado por Tienda Ejemplo.</div>
+      <input id="add-to-cart-button" />
+    `),
+  )
+
+  assert.equal(shouldAlertCandidate(unverified, 1_300), true)
+  assert.equal(shouldAlertCandidate(thirdParty, 1_300), true)
 })
 
 test("reconoce cuando Amazon agrupa remitente y vendedor en una sola tienda", () => {

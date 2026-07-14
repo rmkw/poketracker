@@ -27,14 +27,26 @@ const getDecodoAuth = (): string => {
   return `Basic ${token}`
 }
 
+const getAmazonStore = (): string => {
+  const store = process.env.AMAZON_STORE ?? "com.mx"
+
+  if (!/^[a-z.]+$/i.test(store)) {
+    throw new Error("AMAZON_STORE debe tener un dominio válido, por ejemplo com.mx")
+  }
+
+  return store
+}
+
 export const scrapeProduct = async (asin: string): Promise<ProductSnapshot> => {
+  const geo = process.env.DECODO_GEO?.trim()
   const response = await fetch("https://scraper-api.decodo.com/v2/scrape", {
     method: "POST",
     body: JSON.stringify({
       "target": "amazon_product",
       "query": asin,
-      "domain": "es",
-      "parse": true
+      "domain": getAmazonStore(),
+      "parse": true,
+      ...(geo ? { geo } : {}),
     }),
     headers: {
       "Content-Type": "application/json",

@@ -1,72 +1,77 @@
-# Amazon Price Tracker
+# Pokémon Amazon México Tracker
 
-Tracker de precios de Amazon con:
+Monitor local para vigilar la disponibilidad y el precio de un producto de
+Amazon México y enviar una alerta por Telegram cuando cumpla las condiciones.
 
-- scraping (vía Decodo API o modo manual),
-- persistencia en Turso (libSQL),
-- dashboard web en Astro para visualizar evolución de precios,
-- workflow de GitHub Actions para ejecuciones automáticas.
+El flujo principal permite vigilar uno o varios productos:
+
+- Pokémon TCG: 30TH Celebration Elite Trainer Box
+- ASIN `B0H78BB9TY` y los ASIN que agregues en `AMAZON_ASINS`
+- precio máximo predeterminado de $1,300 MXN
+- vendedor Amazon México
+- envío realizado por Amazon México
+- compra o preventa disponible públicamente
+
+Este proyecto **no compra**, no agrega productos al carrito, no inicia checkout
+y no almacena credenciales de Amazon ni datos de pago.
 
 ## Requisitos
 
-- Node.js >= 22.12.0
+- Node.js 22.12.0 o posterior
 - pnpm
-- Base de datos Turso creada (URL + auth token)
-- Token de Decodo para el scraping por API
+- un bot de Telegram y el identificador del chat receptor
 
-## Instalación
+## Instalación restringida
+
+El lockfile fija las versiones e integridades de los paquetes. Para instalar sin
+ejecutar scripts de instalación de dependencias:
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile --ignore-scripts
+```
+
+Después puedes revisar las dependencias conocidas con:
+
+```bash
+pnpm audit --prod
 ```
 
 ## Configuración
 
-1. Crea tu archivo de entorno:
+Crea el archivo privado de entorno:
 
 ```bash
 cp .env.example .env
 ```
 
-2. Rellena variables en `.env`:
+Configuración mínima:
 
 ```env
-DECODO_AUTH_TOKEN=tu_token
-
-TURSO_DATABASE_URL=tu_database_url
-TURSO_AUTH_TOKEN=tu_auth_token
-
-AMAZON_ASINS=B0XXXXXXXX,B0YYYYYYYY
-AMAZON_STORE=es
-```
-
-Notas:
-
-- `AMAZON_ASINS` acepta una lista separada por comas.
-- `AMAZON_STORE` define el dominio (`es` -> `amazon.es`, `com` -> `amazon.com`, etc.).
-
-## Uso
-
-### 0) Monitor Pokémon 30th ETB (sin compra automática)
-
-Este flujo revisa `https://www.amazon.com.mx/dp/B0H78BB9TY` y solo manda alerta por Telegram si:
-
-- el producto está disponible o en preventa,
-- el precio es menor o igual a `POKEMON_TARGET_PRICE`,
-- vende Amazon México,
-- envía Amazon México,
-- el estado cambió desde la última alerta.
-
-Configura en `.env`:
-
-```env
-POKEMON_ASIN=B0H78BB9TY
-POKEMON_TARGET_PRICE=1300
+AMAZON_ASINS=B0H78BB9TY
+MAX_PRICE=1300
+CHECK_INTERVAL_MINUTES=1
 POKEMON_ALERT_STATE_FILE=.pokemon-alert-state.json
+PRICE_HISTORY_FILE=.pokemon-price-history.json
+AMAZON_SCRAPER_PROVIDER=auto
+DECODO_AUTH_TOKEN=token_de_decodo
+DECODO_REQUEST_TIMEOUT_SECONDS=120
+DEBUG=false
 
-TELEGRAM_BOT_TOKEN=tu_token_de_bot
-TELEGRAM_CHAT_ID=tu_chat_id
+TELEGRAM_BOT_TOKEN=token_generado_por_botfather
+TELEGRAM_CHAT_ID=identificador_del_chat
 ```
+
+`AMAZON_ASINS` acepta una lista separada por comas. El mismo `MAX_PRICE` se
+aplica a todos; `POKEMON_ASIN` y `POKEMON_TARGET_PRICE` son nombres heredados.
+
+`.env` está ignorado por Git. No pongas tokens reales en `.env.example`.
+
+Con `AMAZON_SCRAPER_PROVIDER=auto`, el monitor usa Decodo cuando encuentra una
+credencial real y conserva el acceso directo como respaldo. En esta conexión el
+acceso directo recibe CAPTCHA, por lo que Decodo es necesario para la prueba
+real. Turso no se utiliza en este flujo.
+
+## Comandos principales
 
 Prueba Telegram sin consultar Amazon:
 
@@ -74,108 +79,133 @@ Prueba Telegram sin consultar Amazon:
 pnpm telegram:test
 ```
 
-Ejecuta el monitor:
+Ejecuta una sola revisión:
 
 ```bash
-pnpm monitor:pokemon
+pnpm track:mx
 ```
 
-Notas:
-
-- No compra, no agrega al carrito y no hace checkout.
-- Guarda el último estado en `.pokemon-alert-state.json` para no repetir la misma alerta.
-- Si Amazon devuelve CAPTCHA, bloqueo o una página incompleta, guarda el HTML en `diagnostics/`.
-- Este flujo no requiere Turso ni Decodo para la primera prueba manual.
-
-### 1) Ejecutar tracking por API (recomendado)
+Mantén el monitor activo localmente:
 
 ```bash
-pnpm track
+pnpm track:mx:watch
 ```
 
-Esto:
+El modo continuo espera `CHECK_INTERVAL_MINUTES` entre revisiones. Con Decodo
+el mínimo aceptado es un minuto; sin Decodo se mantiene en cinco minutos para
+no forzar el acceso directo de Amazon. Cada revisión consulta una vez por ASIN:
+dos ASIN cada minuto consumen 2,880 consultas diarias de Decodo.
 
-- inicializa la tabla `price_snapshots` si no existe,
-- scrapea cada ASIN,
-- guarda un snapshot por producto en Turso.
+Detén el modo continuo con `Ctrl+C`.
 
-### 2) Ejecutar scraping manual (sin API de Decodo)
+## Condiciones de la alerta
 
-```bash
-pnpm track:manual
-```
+Telegram recibe un mensaje únicamente cuando:
 
-Este modo hace fetch directo contra Amazon y puede fallar por CAPTCHA o bloqueo.
+1. existe una señal pública de compra o preventa;
+2. el producto no aparece agotado;
+3. el precio es igual o menor que `MAX_PRICE`;
+4. vende Amazon México;
+5. envía Amazon México;
+6. ese mismo estado todavía no fue alertado.
 
-### 2.1) Ejecutar scraping manual usando Proxy + Decodo
+La firma de la alerta considera el precio, vendedor, remitente y disponibilidad,
+pero ignora textos variables como la fecha estimada de entrega.
 
-```bash
-pnpm track:manual:proxy
-```
+Cada precio encontrado se guarda localmente cuando cambia, incluso si la oferta
+no cumple aún las condiciones. Telegram se mantiene breve: nombre del producto
+y enlace directo a Amazon; la hora del mensaje indica cuándo se detectó.
 
-Este modo reutiliza el scraper por API (Decodo) y muestra logs manuales por ASIN indicando que la solicitud se realiza por proxy.
+Si Telegram falla, la alerta no se marca como enviada y se intenta nuevamente
+en la siguiente revisión. Si el producto se agota y después regresa con las
+mismas condiciones, vuelve a alertar.
 
-### 3) Ver dashboard local
+## Estado y diagnósticos
 
-```bash
-pnpm dev
-```
-
-Abre la URL que muestra Astro (normalmente `http://localhost:4321`) para ver:
-
-- tarjetas por producto,
-- precio actual y variación,
-- histórico de precios con gráfico.
-
-## Scripts
-
-- `pnpm dev`: arranca la app en desarrollo
-- `pnpm build`: build de producción
-- `pnpm preview`: sirve el build local
-- `pnpm track`: ejecuta scraper API + persistencia
-- `pnpm track:manual`: ejecuta scraper manual + persistencia
-- `pnpm track:manual:proxy`: ejecuta scraper manual de consola usando Decodo (proxy)
-
-## Automatización con GitHub Actions
-
-Existe un workflow en `.github/workflows/track-amazon-prices.yml` que se ejecuta:
-
-- cada día a las 07:00 UTC,
-- y manualmente con `workflow_dispatch`.
-
-Debes configurar estos secretos en GitHub:
-
-- `DECODO_AUTH_TOKEN`
-- `TURSO_DATABASE_URL`
-- `TURSO_AUTH_TOKEN`
-- `AMAZON_ASINS`
-
-## Estructura del proyecto
+El último estado se guarda localmente en:
 
 ```text
-src/
-  db/
-    client.ts      # cliente Turso
-    schema.ts      # creación de tabla e índice
-    queries.ts     # inserts y consultas
-  tracker/
-    index.ts       # entrypoint del tracking por API
-    scraper.ts     # scraping con Decodo
-    manual-scraper.ts
-    utils.ts
-    types.ts
-  pages/
-    index.astro    # dashboard
+.pokemon-alert-state.json
 ```
 
-## Cambiar proveedor de scraping
+La escritura es atómica y el archivo está ignorado por Git.
 
-La parte intercambiable está en `src/tracker/scraper.ts`.
+El historial por ASIN se guarda en `.pokemon-price-history.json`, también
+ignorado por Git. Se conservan hasta 300 cambios por ASIN de forma predeterminada.
 
-Mientras `scrapeProduct(asin)` devuelva la estructura `ProductSnapshot`, el resto del sistema no necesita cambios.
+Cuando Amazon devuelve CAPTCHA, una respuesta incompleta o faltan campos
+importantes de una oferta disponible, el HTML se guarda en `diagnostics/`.
+Estos archivos también están ignorados por Git.
 
-## Consideraciones
+Activa información detallada con:
 
-- El HTML y las estructuras de Amazon pueden cambiar sin previo aviso.
-- Respeta términos de uso y límites del proveedor de scraping.
-- Este proyecto está orientado a aprendizaje y monitorización técnica.
+```env
+DEBUG=true
+```
+
+## Restricciones de dirección
+
+La primera versión observa únicamente la oferta pública. Si Amazon muestra una
+restricción para una dirección concreta, el monitor la registra en DEBUG, pero
+no intenta iniciar sesión ni validar el checkout.
+
+Por eso una alerta confirma disponibilidad pública, no que Amazon vaya a aceptar
+una dirección específica al finalizar la compra.
+
+## Pruebas y build
+
+Ejecuta las pruebas del parser y del estado local:
+
+```bash
+pnpm test
+```
+
+Comprueba el proyecto Astro:
+
+```bash
+pnpm build
+```
+
+El dashboard heredado usa Turso y es independiente del monitor local.
+
+## Solución de problemas
+
+### Telegram responde 401
+
+El token no coincide con un bot activo. Verifícalo con BotFather y con el método
+`getMe`. Si el token fue compartido públicamente, revócalo y genera otro.
+
+### Telegram responde chat not found
+
+Abre el chat con el bot, presiona Start, envía un mensaje y obtén nuevamente
+`message.chat.id` mediante `getUpdates`.
+
+### Amazon devuelve CAPTCHA o bloqueo
+
+Revisa el archivo creado en `diagnostics/`. Configura `DECODO_AUTH_TOKEN` y deja
+`AMAZON_SCRAPER_PROVIDER=auto` para que el monitor use el proveedor proxy. No
+reduzcas el intervalo a pocos segundos ni intentes evadir el CAPTCHA
+agresivamente con el acceso directo.
+
+### Precio, vendedor o remitente no encontrados
+
+Ejecuta una vez con `DEBUG=true` y conserva el HTML de diagnóstico. Amazon
+puede variar la estructura de la página según ubicación, idioma o sesión.
+
+## Tracker heredado opcional
+
+El repositorio conserva el tracker original con Decodo, Turso y el dashboard
+Astro:
+
+- `pnpm track`
+- `pnpm track:manual`
+- `pnpm track:proxy`
+- `pnpm dev`
+
+Ese flujo requiere `DECODO_AUTH_TOKEN`, `TURSO_DATABASE_URL` y
+`TURSO_AUTH_TOKEN`. El monitor `track:mx` reutiliza únicamente
+`DECODO_AUTH_TOKEN`; no necesita Turso.
+
+El workflow actual de GitHub Actions sigue apuntando al tracker heredado. No
+debe activarse para el monitor Pokémon hasta terminar y validar las pruebas
+locales.

@@ -421,12 +421,14 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
 
   :global(.chart) {
     border-radius: 6px;
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
     position: relative;
+    scrollbar-gutter: stable;
   }
 
   :global(.chart svg) {
-    width: 100%;
+    width: max(100%, var(--chart-width, 900px));
     height: auto;
     display: block;
   }
@@ -500,7 +502,7 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
   const successfulChecksElement = document.querySelector<HTMLElement>("[data-successful-checks]")
   const failedChecksElement = document.querySelector<HTMLElement>("[data-failed-checks]")
   const priceChangesElement = document.querySelector<HTMLElement>("[data-price-changes]")
-  const controlUrl = "http://127.0.0.1:3784"
+  const controlUrl = "/monitor-api"
   const palette = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"]
   const chartWidth = 900
   const chartHeight = 340
@@ -595,37 +597,37 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     const events = points.filter((point) => new Date(point.scrapedAt).getTime() >= start)
     const priced = events.filter((point): point is Point & { price: number } => point.price !== null)
     const prices = priced.map((point) => point.price)
-    const eventTimes = events.map((point) => new Date(point.scrapedAt).getTime())
-    const firstEventAt = eventTimes.length > 0 ? Math.min(...eventTimes) : start
-    const lastEventAt = eventTimes.length > 0 ? Math.max(...eventTimes) : now
-    const eventSpan = Math.max(lastEventAt - firstEventAt, 5 * 60 * 1_000)
-    const timePadding = Math.max(eventSpan * 0.04, 60_000)
-    const domainStart = firstEventAt - timePadding
-    const domainEnd = lastEventAt + timePadding
+    const productChartWidth = Math.max(chartWidth, plotLeft + plotRight + Math.max(events.length - 1, 1) * 18)
     const hasPrices = prices.length > 0
     const minPrice = prices.length > 0 ? Math.min(...prices) : 0
     const maxPrice = prices.length > 0 ? Math.max(...prices) : 1
     const padding = Math.max((maxPrice - minPrice) * 0.1, 1)
     const yMin = minPrice - padding
     const yMax = maxPrice + padding
-    const plotWidth = chartWidth - plotLeft - plotRight
+    const plotWidth = productChartWidth - plotLeft - plotRight
     const plotHeight = chartHeight - plotTop - plotBottom
-    const x = (time: number) => plotLeft + ((time - domainStart) / (domainEnd - domainStart)) * plotWidth
+    const eventIndex = new Map(events.map((point, index) => [point, index]))
+    const x = (point: Point) => plotLeft + ((eventIndex.get(point) ?? 0) / Math.max(events.length - 1, 1)) * plotWidth
     const y = (price: number) => plotTop + ((yMax - price) / (yMax - yMin)) * plotHeight
     const ticks = Array.from({ length: 5 }, (_, index) => yMax - (index / 4) * (yMax - yMin))
-    const timeTicks = Array.from({ length: 5 }, (_, index) => domainStart + (index / 4) * (domainEnd - domainStart))
+    const timeTicks = Array.from({ length: Math.min(5, Math.max(events.length, 1)) }, (_, index, entries) => {
+      if (events.length === 0) return { x: plotLeft + (index / Math.max(entries.length - 1, 1)) * plotWidth, time: now }
+      const eventPosition = Math.round((index / Math.max(entries.length - 1, 1)) * (events.length - 1))
+      const point = events[eventPosition]!
+      return { x: x(point), time: new Date(point.scrapedAt).getTime() }
+    })
     const noStockY = hasPrices ? plotTop + plotHeight : plotTop + plotHeight / 2
     const grids = hasPrices
-      ? ticks.map((value) => `<g><line x1="${plotLeft}" y1="${y(value)}" x2="${chartWidth - plotRight}" y2="${y(value)}" class="grid"/><text x="${plotLeft - 8}" y="${y(value) + 4}" class="label" text-anchor="end">MX$${value.toFixed(0)}</text></g>`).join("")
-      : `<g><line x1="${plotLeft}" y1="${noStockY}" x2="${chartWidth - plotRight}" y2="${noStockY}" class="grid"/><text x="${plotLeft - 8}" y="${noStockY + 4}" class="label" text-anchor="end">Sin stock</text></g>`
-    const labels = timeTicks.map((time) => `<text x="${x(time)}" y="${chartHeight - plotBottom + 20}" class="label" text-anchor="middle">${new Date(time).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</text>`).join("")
-    const path = priced.map((point, index) => `${index === 0 ? "M" : "L"}${x(new Date(point.scrapedAt).getTime()).toFixed(1)} ${y(point.price).toFixed(1)}`).join(" ")
+      ? ticks.map((value) => `<g><line x1="${plotLeft}" y1="${y(value)}" x2="${productChartWidth - plotRight}" y2="${y(value)}" class="grid"/><text x="${plotLeft - 8}" y="${y(value) + 4}" class="label" text-anchor="end">MX$${value.toFixed(0)}</text></g>`).join("")
+      : `<g><line x1="${plotLeft}" y1="${noStockY}" x2="${productChartWidth - plotRight}" y2="${noStockY}" class="grid"/><text x="${plotLeft - 8}" y="${noStockY + 4}" class="label" text-anchor="end">Sin stock</text></g>`
+    const labels = timeTicks.map((tick) => `<text x="${tick.x}" y="${chartHeight - plotBottom + 20}" class="label" text-anchor="middle">${new Date(tick.time).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</text>`).join("")
+    const path = priced.map((point, index) => `${index === 0 ? "M" : "L"}${x(point).toFixed(1)} ${y(point.price).toFixed(1)}`).join(" ")
     const priceDots = priced.map((point) => {
       const thirdParty = isExplicitThirdParty(point)
-      return `<circle cx="${x(new Date(point.scrapedAt).getTime())}" cy="${y(point.price)}" r="${thirdParty ? 5 : 3}" fill="${thirdParty ? "#f59e0b" : color}" class="point" data-tooltip="${escapeHtml(`${thirdParty ? "Revendedor · " : ""}${money(point.price)} · ${new Date(point.scrapedAt).toLocaleString("es-MX")}`)}"/>`
+      return `<circle cx="${x(point)}" cy="${y(point.price)}" r="${thirdParty ? 5 : 3}" fill="${thirdParty ? "#f59e0b" : color}" class="point" data-tooltip="${escapeHtml(`${thirdParty ? "Revendedor · " : ""}${money(point.price)} · ${new Date(point.scrapedAt).toLocaleString("es-MX")}`)}"/>`
     }).join("")
-    const noStockDots = events.filter((point) => !isPurchasable(point)).map((point) => `<circle cx="${x(new Date(point.scrapedAt).getTime())}" cy="${noStockY}" r="4" fill="#ef4444" class="point no-stock-point" data-tooltip="${escapeHtml(`Sin stock · ${new Date(point.scrapedAt).toLocaleString("es-MX")}`)}"/>`).join("")
-    return `<div class="chart-head"><h2>Evolución de precio · últimas 24 horas</h2><span class="legend-item"><span class="dot" style="background:${color}"></span>${escapeHtml(asin)} · 💀 Revendedor · <i class="stock-dot"></i> Sin stock</span></div><div class="chart"><svg viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="Gráfica de ${escapeHtml(asin)}">${grids}${labels}${path ? `<path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>` : ""}${priceDots}${noStockDots}</svg><div class="tooltip"></div></div>`
+    const noStockDots = events.filter((point) => !isPurchasable(point)).map((point) => `<circle cx="${x(point)}" cy="${noStockY}" r="4" fill="#ef4444" class="point no-stock-point" data-tooltip="${escapeHtml(`Sin stock · ${new Date(point.scrapedAt).toLocaleString("es-MX")}`)}"/>`).join("")
+    return `<div class="chart-head"><h2>Evolución de precio · últimas 24 horas</h2><span class="legend-item"><span class="dot" style="background:${color}"></span>${escapeHtml(asin)} · 💀 Revendedor · <i class="stock-dot"></i> Sin stock</span></div><div class="chart" data-product-chart="${escapeHtml(asin)}" style="--chart-width:${productChartWidth}px"><svg viewBox="0 0 ${productChartWidth} ${chartHeight}" role="img" aria-label="Gráfica de ${escapeHtml(asin)}">${grids}${labels}${path ? `<path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>` : ""}${priceDots}${noStockDots}</svg><div class="tooltip"></div></div>`
   }
 
   const renderDashboard = (payload: DashboardPayload) => {
@@ -650,6 +652,13 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
           section.dataset.productSection!,
           section.querySelector<HTMLElement>(".flow-track")?.scrollLeft ?? 0,
         ]),
+      )
+      const previousChartScrollByAsin = new Map(
+        [...productsDashboard.querySelectorAll<HTMLElement>("[data-product-section]")].map((section) => {
+          const chart = section.querySelector<HTMLElement>("[data-product-chart]")
+          const wasAtEnd = !chart || chart.scrollLeft >= chart.scrollWidth - chart.clientWidth - 8
+          return [section.dataset.productSection!, wasAtEnd ? Number.POSITIVE_INFINITY : chart.scrollLeft] as const
+        }),
       )
       productsDashboard.innerHTML = payload.products.map((product, index) => {
         const stat = payload.stats.find((entry) => entry.asin === product.asin)
@@ -682,6 +691,7 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
       productsDashboard.querySelectorAll<HTMLElement>("[data-product-section]").forEach((section) => {
         const asin = section.dataset.productSection!
         const track = section.querySelector<HTMLElement>(".flow-track")
+        const chart = section.querySelector<HTMLElement>("[data-product-chart]")
         const readings = track?.querySelectorAll<HTMLElement>("[data-reading-at]") ?? []
         const newest = readings.item(readings.length - 1)
         const newestAt = newest?.dataset.readingAt
@@ -694,6 +704,12 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
             ? track.scrollWidth
             : previousScrollByAsin.get(asin) ?? track.scrollWidth
         }
+        if (chart) {
+          const previousChartScroll = previousChartScrollByAsin.get(asin)
+          chart.scrollLeft = previousChartScroll === undefined || !Number.isFinite(previousChartScroll)
+            ? chart.scrollWidth
+            : previousChartScroll
+        }
       })
       productsDashboard.querySelectorAll<SVGCircleElement>(".point").forEach((point) => {
         point.addEventListener("mouseenter", () => {
@@ -704,7 +720,7 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
           tooltip.textContent = point.dataset.tooltip ?? ""
           tooltip.classList.add("visible")
           const box = svg.getBoundingClientRect()
-          tooltip.style.left = `${(parseFloat(point.getAttribute("cx")!) / chartWidth) * box.width}px`
+          tooltip.style.left = `${(parseFloat(point.getAttribute("cx")!) / svg.viewBox.baseVal.width) * box.width}px`
           tooltip.style.top = `${(parseFloat(point.getAttribute("cy")!) / chartHeight) * box.height}px`
         })
         point.addEventListener("mouseleave", () => point.closest(".chart")?.querySelector(".tooltip")?.classList.remove("visible"))

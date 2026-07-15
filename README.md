@@ -127,7 +127,33 @@ El dashboard local permite pausar/reanudar todo o cada producto individualmente.
 Un producto pausado no hace consultas a Decodo. Para Windows, ejecuta una vez
 `run-monitor.cmd` o programa ese archivo con el Programador de tareas usando el
 disparador **Al iniciar sesión**. El dashboard continúa en `http://127.0.0.1:4321`
-mientras ejecutes `pnpm dev`; sus controles se conectan solo al monitor local.
+mientras ejecutes `pnpm dev`.
+
+## Acceso remoto seguro con Cloudflare Tunnel
+
+El dashboard usa `/monitor-api` en el mismo origen y Astro lo redirige al
+supervisor local en `127.0.0.1:3784`. Por eso un túnel debe publicar únicamente
+`http://localhost:4321`; los botones remotos siguen controlando el monitor local
+sin publicar el puerto 3784 por separado.
+
+En una PC de trabajo sin permisos de administrador se puede ejecutar el archivo
+independiente `cloudflared.exe` desde una carpeta del usuario. No instales el
+servicio de Windows. Crea un túnel administrado en Cloudflare, configura una ruta
+pública hacia `http://localhost:4321` y protégela con Cloudflare Access para
+permitir solamente tu correo.
+
+Mantén abiertas estas tres terminales:
+
+```text
+pnpm monitor:start
+pnpm dev
+cloudflared.exe tunnel run --token TU_TOKEN_DEL_TUNEL
+```
+
+El token del túnel es privado: no debe copiarse al `.env`, al repositorio ni a
+Telegram. Una URL temporal `trycloudflare.com` sirve para una prueba corta, pero
+no debe usarse como acceso permanente a este panel porque sus controles cambian
+el estado del monitor. Respeta además las políticas de red de la empresa.
 
 ## Condiciones de la alerta
 

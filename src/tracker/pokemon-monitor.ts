@@ -172,7 +172,7 @@ export const buildMessage = (data: AmazonMxProduct): string =>
     `Producto: ${data.title ?? data.asin}`,
     "Disponible en Amazon México.",
     "Abrir producto:",
-    data.url,
+    `https://www.amazon.com.mx/dp/${data.asin}`,
   ].join("\n")
 
 export const buildCandidateMessage = (data: AmazonMxProduct): string =>
@@ -184,7 +184,7 @@ export const buildCandidateMessage = (data: AmazonMxProduct): string =>
     `Envío: ${data.shipper ?? "sin confirmar"}`,
     "No es una oferta confirmada por Amazon México; revisa antes de comprar.",
     "Abrir producto:",
-    data.url,
+    `https://www.amazon.com.mx/dp/${data.asin}`,
   ].join("\n")
 
 const logProduct = (
@@ -368,6 +368,24 @@ const runWatchMode = async (config: MonitorConfig): Promise<void> => {
     getInterval: () => checkIntervalMinutes,
     getMasterActive: () => control.masterActive,
     isProductEnabled: control.isProductEnabled,
+    getProductStatuses: async () => {
+      const dashboard = await readDashboardData(config.historyFile, config.statsFile)
+      return config.products.map((product) => {
+        const stats = dashboard.stats.find((entry) => entry.asin === product.asin)
+        const latest = dashboard.points.filter((point) => point.asin === product.asin).at(-1)
+        return {
+          asin: product.asin,
+          targetPrice: product.targetPrice,
+          lastPrice: stats?.lastPrice ?? null,
+          lastCheckedAt: stats?.lastCheckedAt ?? null,
+          lastError: stats?.lastError ?? null,
+          availability: latest?.availability ?? null,
+          seller: latest?.seller ?? null,
+          shipper: latest?.shipper ?? null,
+          isAvailable: latest?.isAvailable,
+        }
+      })
+    },
     setInterval: control.setCheckIntervalMinutes,
     setMasterActive: control.setMasterActive,
     setProductEnabled: control.setProductEnabled,

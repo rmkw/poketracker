@@ -78,21 +78,62 @@ const helpMessage = (products: Array<{ asin: string }>): string => [
   "/ayuda - mostrar estos comandos",
 ].join("\n")
 
+export type TelegramProductStatus = {
+  asin: string
+  targetPrice: number
+  lastPrice: number | null
+  lastCheckedAt: string | null
+  lastError: string | null
+  availability: string | null
+  seller: string | null
+  shipper: string | null
+  isAvailable?: boolean
+}
+
+const money = (price: number): string => `$${price.toLocaleString("es-MX", { maximumFractionDigits: 2 })} MXN`
+
+const formatProductStatus = (
+  status: TelegramProductStatus,
+  index: number,
+  enabled: boolean,
+  masterActive: boolean,
+): string => {
+  const parties = [status.seller, status.shipper].filter(Boolean).join(" ")
+  const thirdParty = parties.length > 0 && !/amazon/i.test(parties)
+  const availability = status.lastPrice === null || status.isAvailable === false
+    ? "⛔ Sin stock"
+    : thirdParty
+      ? "💀 Sólo revendedor"
+      : "✅ Oferta detectada"
+  const monitor = !masterActive ? "pausado por control general" : enabled ? "activo" : "pausado"
+
+  return [
+    `${index + 1}. ${status.asin}`,
+    `Monitor: ${monitor}`,
+    `Estado: ${availability}`,
+    `Precio: ${status.lastPrice === null ? "sin precio" : money(status.lastPrice)} · máximo ${money(status.targetPrice)}`,
+    `Última revisión: ${status.lastCheckedAt ? new Date(status.lastCheckedAt).toLocaleString("es-MX") : "sin datos"}`,
+    ...(status.lastError ? [`Error: ${status.lastError}`] : []),
+  ].join("\n")
+}
+
 export const startTelegramControl = ({
   stateFile,
   products,
   getInterval,
   getMasterActive,
   isProductEnabled,
+  getProductStatuses,
   setInterval,
   setMasterActive,
   setProductEnabled,
 }: {
   stateFile: string
-  products: Array<{ asin: string }>
+  products: Array<{ asin: string; targetPrice: number }>
   getInterval: () => number
   getMasterActive: () => boolean
   isProductEnabled: (asin: string) => boolean
+  getProductStatuses: () => Promise<TelegramProductStatus[]>
   setInterval: (minutes: number) => Promise<void>
   setMasterActive: (active: boolean) => Promise<void>
   setProductEnabled: (asin: string, active: boolean) => Promise<void>
@@ -131,11 +172,16 @@ export const startTelegramControl = ({
           } else if (command.kind === "help") {
             await sendTelegramMessage(helpMessage(products))
           } else if (command.kind === "status") {
-            const productStates = products.map((product, index) => `${index + 1}. ${product.asin}: ${isProductEnabled(product.asin) ? "activo" : "pausado"}`)
+            const productStatuses = await getProductStatuses()
+            const masterActive = getMasterActive()
             await sendTelegramMessage([
-              `Monitor general: ${getMasterActive() ? "activo" : "pausado"}`,
+              `Monitor general: ${masterActive ? "activo" : "pausado"}`,
               `Revisiones cada ${getInterval()} minuto(s).`,
-              ...productStates,
+              "",
+              ...productStatuses.flatMap((status, index) => [
+                formatProductStatus(status, index, isProductEnabled(status.asin), masterActive),
+                "",
+              ]),
             ].join("\n"))
           } else if (command.kind === "interval") {
             await setInterval(command.minutes)

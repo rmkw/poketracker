@@ -1,28 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
-import { mkdir, readFile, writeFile } from "node:fs/promises"
-import { dirname } from "node:path"
+import { readMonitorSettings, writeMonitorSettings, type MonitorSettings } from "./monitor-settings.js"
 
 const allowedIntervals = new Set([1, 5])
-
-const readInterval = async (file: string, fallback: number): Promise<number> => {
-  try {
-    const parsed = JSON.parse(await readFile(file, "utf8")) as { checkIntervalMinutes?: unknown }
-    const value = Number(parsed.checkIntervalMinutes)
-    return allowedIntervals.has(value) ? value : fallback
-  } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
-      return fallback
-    }
-    throw error
-  }
-}
-
-const writeInterval = async (file: string, minutes: number): Promise<void> => {
-  await mkdir(dirname(file), { recursive: true })
-  await writeFile(file, `${JSON.stringify({ checkIntervalMinutes: minutes }, null, 2)}\n`, {
-    mode: 0o600,
-  })
-}
 
 const sendJson = (response: ServerResponse, status: number, body: unknown): void => {
   response.writeHead(status, {
@@ -45,30 +24,38 @@ const readBody = async (request: IncomingMessage): Promise<string> => {
 
 export type MonitorControl = {
   checkIntervalMinutes: number
+  masterActive: boolean
+  isProductEnabled: (asin: string) => boolean
   setCheckIntervalMinutes: (minutes: number) => Promise<void>
   close: () => Promise<void>
 }
 
 export const startMonitorControl = async ({
   initialIntervalMinutes,
+  products,
   settingsFile,
   port,
   onIntervalChange,
   getDashboardData,
 }: {
   initialIntervalMinutes: number
+  products: Array<{ asin: string; targetPrice: number }>
   settingsFile: string
   port: number
   onIntervalChange: (minutes: number) => void
   getDashboardData: () => Promise<object>
 }): Promise<MonitorControl> => {
-  let checkIntervalMinutes = await readInterval(settingsFile, initialIntervalMinutes)
-  onIntervalChange(checkIntervalMinutes)
+  let settings = await readMonitorSettings(settingsFile, {
+    checkIntervalMinutes: initialIntervalMinutes,
+    masterActive: true,
+    enabledProducts: Object.fromEntries(products.map((product) => [product.asin, true])),
+  })
+  onIntervalChange(settings.checkIntervalMinutes)
 
   const setCheckIntervalMinutes = async (minutes: number): Promise<void> => {
     if (!allowedIntervals.has(minutes)) throw new Error("El intervalo debe ser 1 o 5 minutos")
-    checkIntervalMinutes = minutes
-    await writeInterval(settingsFile, minutes)
+    settings = { ...settings, checkIntervalMinutes: minutes }
+    await writeMonitorSettings(settingsFile, settings)
     onIntervalChange(minutes)
   }
 
@@ -79,7 +66,7 @@ export const startMonitorControl = async ({
     }
 
     if (request.method === "GET" && request.url === "/status") {
-      sendJson(response, 200, { checkIntervalMinutes })
+      sendJson(response, 200, { ...settings, products })
       return
     }
 
@@ -87,7 +74,8 @@ export const startMonitorControl = async ({
       try {
         sendJson(response, 200, {
           ...(await getDashboardData()),
-          checkIntervalMinutes,
+          ...settings,
+          products,
           generatedAt: new Date().toISOString(),
         })
       } catch (error) {
@@ -103,10 +91,31 @@ export const startMonitorControl = async ({
         const payload = JSON.parse(await readBody(request)) as { checkIntervalMinutes?: unknown }
         const minutes = Number(payload.checkIntervalMinutes)
         await setCheckIntervalMinutes(minutes)
-        sendJson(response, 200, { checkIntervalMinutes })
+        sendJson(response, 200, settings)
       } catch (error) {
         sendJson(response, 400, { error: error instanceof Error ? error.message : "Solicitud invalida" })
       }
+      return
+    }
+
+    if (request.method === "POST" && request.url === "/master") {
+      const payload = JSON.parse(await readBody(request)) as { active?: unknown }
+      settings = { ...settings, masterActive: Boolean(payload.active) }
+      await writeMonitorSettings(settingsFile, settings)
+      onIntervalChange(settings.checkIntervalMinutes)
+      sendJson(response, 200, settings)
+      return
+    }
+
+    const productMatch = request.url?.match(/^\/products\/([A-Z0-9]{10})$/i)
+    if (request.method === "POST" && productMatch) {
+      const asin = productMatch[1]!.toUpperCase()
+      if (!products.some((product) => product.asin === asin)) { sendJson(response, 404, { error: "Producto no configurado" }); return }
+      const payload = JSON.parse(await readBody(request)) as { active?: unknown }
+      settings = { ...settings, enabledProducts: { ...settings.enabledProducts, [asin]: Boolean(payload.active) } }
+      await writeMonitorSettings(settingsFile, settings)
+      onIntervalChange(settings.checkIntervalMinutes)
+      sendJson(response, 200, settings)
       return
     }
 
@@ -123,8 +132,10 @@ export const startMonitorControl = async ({
 
   return {
     get checkIntervalMinutes() {
-      return checkIntervalMinutes
+      return settings.checkIntervalMinutes
     },
+    get masterActive() { return settings.masterActive },
+    isProductEnabled: (asin) => settings.enabledProducts[asin] !== false,
     setCheckIntervalMinutes,
     close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
   }

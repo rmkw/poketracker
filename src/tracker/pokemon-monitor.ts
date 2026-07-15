@@ -19,8 +19,7 @@ import { sendTelegramMessage } from "./telegram.js"
 import { startTelegramControl } from "./telegram-control.js"
 
 export type MonitorConfig = {
-  asins: string[]
-  targetPrice: number
+  products: Array<{ asin: string; targetPrice: number }>
   stateFile: string
   historyFile: string
   historyLimit: number
@@ -63,6 +62,19 @@ const getConfiguredAsins = (): string[] => {
   return asins
 }
 
+const getConfiguredProducts = (): Array<{ asin: string; targetPrice: number }> => {
+  const configured = process.env.AMAZON_PRODUCTS?.trim()
+  if (!configured) {
+    const price = readPositiveNumber(process.env.MAX_PRICE ?? process.env.POKEMON_TARGET_PRICE, DEFAULT_TARGET_PRICE, "MAX_PRICE")
+    return getConfiguredAsins().map((asin) => ({ asin, targetPrice: price }))
+  }
+  return configured.split(",").map((entry) => {
+    const [asin, price] = entry.trim().split(":")
+    if (!asin || !/^[A-Z0-9]{10}$/i.test(asin)) throw new Error(`ASIN inválido: ${asin}`)
+    return { asin: asin.toUpperCase(), targetPrice: readPositiveNumber(price, DEFAULT_TARGET_PRICE, `precio de ${asin}`) }
+  })
+}
+
 const readPositiveNumber = (
   value: string | undefined,
   fallback: number,
@@ -78,11 +90,6 @@ const readPositiveNumber = (
 }
 
 export const getMonitorConfig = (): MonitorConfig => {
-  const targetPrice = readPositiveNumber(
-    process.env.MAX_PRICE ?? process.env.POKEMON_TARGET_PRICE,
-    DEFAULT_TARGET_PRICE,
-    "MAX_PRICE",
-  )
   const checkIntervalMinutes = readPositiveNumber(
     process.env.CHECK_INTERVAL_MINUTES,
     DEFAULT_CHECK_INTERVAL_MINUTES,
@@ -101,8 +108,7 @@ export const getMonitorConfig = (): MonitorConfig => {
   }
 
   return {
-    asins: getConfiguredAsins(),
-    targetPrice,
+    products: getConfiguredProducts(),
     stateFile:
       process.env.POKEMON_ALERT_STATE_FILE ?? ".pokemon-alert-state.json",
     historyFile: process.env.PRICE_HISTORY_FILE ?? ".pokemon-price-history.json",
@@ -230,7 +236,7 @@ export type CheckResult = {
 }
 
 const stateFileForAsin = (config: MonitorConfig, asin: string): string => {
-  if (config.asins.length === 1) return config.stateFile
+  if (config.products.length === 1) return config.stateFile
 
   const extension = extname(config.stateFile)
   const filename = basename(config.stateFile, extension)
@@ -261,10 +267,11 @@ export const runCheck = async (
           },
           config.historyLimit,
         )
-  const signature = buildSignature(data, config.targetPrice)
-  const eligible = shouldAlert(data, config.targetPrice)
-  const candidate = shouldAlertCandidate(data, config.targetPrice)
-  const alertable = eligible || candidate
+  const targetPrice = config.products.find((product) => product.asin === asin)?.targetPrice ?? DEFAULT_TARGET_PRICE
+  const signature = buildSignature(data, targetPrice)
+  const eligible = shouldAlert(data, targetPrice)
+  const candidate = false
+  const alertable = eligible
   const changed = signature !== state.signature
   const priceChanged =
     data.price !== null && history.previousPrice !== null && history.previousPrice !== data.price
@@ -312,10 +319,10 @@ export const runCheck = async (
   return { data, eligible, candidate, changed, priceChanged, alertSent }
 }
 
-const runAllChecks = async (config: MonitorConfig): Promise<CheckResult[]> => {
+const runAllChecks = async (config: MonitorConfig, asins = config.products.map((product) => product.asin)): Promise<CheckResult[]> => {
   const results: CheckResult[] = []
 
-  for (const asin of config.asins) {
+  for (const asin of asins) {
     try {
       results.push(await runCheck(config, asin))
     } catch (error) {
@@ -349,6 +356,7 @@ const runWatchMode = async (config: MonitorConfig): Promise<void> => {
 
   const control = await startMonitorControl({
     initialIntervalMinutes: config.checkIntervalMinutes,
+    products: config.products,
     settingsFile: config.settingsFile,
     port: config.controlPort,
     getDashboardData: () => readDashboardData(config.historyFile, config.statsFile),
@@ -380,7 +388,13 @@ const runWatchMode = async (config: MonitorConfig): Promise<void> => {
       const startedAt = Date.now()
 
       try {
-        await runAllChecks(config)
+        if (!control.masterActive) {
+          console.log("Monitor pausado desde el dashboard; no se hicieron consultas")
+        } else {
+          const activeAsins = config.products.filter((product) => control.isProductEnabled(product.asin)).map((product) => product.asin)
+          if (activeAsins.length === 0) console.log("Todos los productos están pausados; no se hicieron consultas")
+          else await runAllChecks(config, activeAsins)
+        }
       } catch (error) {
         console.error(
           `[${new Date().toISOString()}] Revisión falló: ${formatError(error)}`,

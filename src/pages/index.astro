@@ -194,6 +194,8 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
       <span class="control-status" data-control-status>Conectando con el monitor...</span>
     </section>
 
+    <section class="product-controls" aria-label="Productos vigilados" data-product-controls></section>
+
     {chartError ? (
       <div class="notice">{chartError}</div>
     ) : (
@@ -346,6 +348,16 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     gap: 0.65rem;
     margin: -0.75rem 0 1.5rem;
   }
+
+  .product-controls { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-bottom: 1.5rem; }
+  :global(.product-control-card) { background: #18181b; border: 1px solid #3f3f46; border-radius: 8px; display: grid; gap: 0.45rem; grid-template-columns: 56px 1fr auto; padding: 0.75rem; }
+  :global(.product-image) { align-items: center; background: #27272a; border-radius: 6px; color: #facc15; display: flex; font-size: 1.5rem; height: 56px; justify-content: center; overflow: hidden; width: 56px; }
+  :global(.product-image img) { height: 100%; object-fit: cover; width: 100%; }
+  :global(.product-control-card strong) { color: #fafafa; font-family: ui-monospace, monospace; }
+  :global(.product-control-card small) { color: #a1a1aa; }
+  :global(.product-toggle) { align-self: center; background: #27272a; border: 1px solid #52525b; color: #e4e4e7; cursor: pointer; padding: 0.4rem 0.55rem; }
+  :global(.product-toggle.active) { border-color: #16a34a; color: #86efac; }
+  :global(.master-control) { grid-column: 1 / -1; }
 
   .interval-switch {
     border: 1px solid #3f3f46;
@@ -564,6 +576,7 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
   const successfulChecksElement = document.querySelector<HTMLElement>("[data-successful-checks]")
   const failedChecksElement = document.querySelector<HTMLElement>("[data-failed-checks]")
   const priceChangesElement = document.querySelector<HTMLElement>("[data-price-changes]")
+  const productControls = document.querySelector<HTMLElement>("[data-product-controls]")
   const controlUrl = "http://127.0.0.1:3784"
   const palette = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"]
   const chartWidth = 900
@@ -575,7 +588,8 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
 
 type Point = { asin: string; price: number; currency: string; availability: string | null; seller?: string | null; shipper?: string | null; isAvailable?: boolean; hasPurchaseSignal?: boolean; scrapedAt: string }
   type Stats = { asin: string; totalChecks: number; successfulChecks: number; failedChecks: number; priceChanges: number; lastCheckedAt: string | null; lastPrice: number | null; lastError: string | null }
-  type DashboardPayload = { points: Point[]; stats: Stats[]; checkIntervalMinutes: number; generatedAt: string }
+  type Product = { asin: string; targetPrice: number }
+  type DashboardPayload = { points: Point[]; stats: Stats[]; products: Product[]; checkIntervalMinutes: number; masterActive: boolean; enabledProducts: Record<string, boolean>; generatedAt: string }
 
   const money = (price: number) => `MX$${price.toLocaleString("es-MX", { maximumFractionDigits: 2 })}`
   const escapeHtml = (value: string) => value.replace(/[&<>"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]!)
@@ -668,8 +682,26 @@ type Point = { asin: string; price: number; currency: string; availability: stri
       priceFlow.scrollLeft = priceFlow.scrollWidth
     }
     renderInterval(payload.checkIntervalMinutes)
+    if (productControls) {
+      const cards = payload.products.map((product) => {
+        const stat = payload.stats.find((entry) => entry.asin === product.asin)
+        const active = payload.masterActive && payload.enabledProducts[product.asin] !== false
+        return `<article class="product-control-card"><span class="product-image">📦</span><div><strong>${escapeHtml(product.asin)}</strong><small>Tope: ${money(product.targetPrice)} · ${stat?.lastPrice != null ? `Último: ${money(stat.lastPrice)}` : "Sin lectura"}</small></div><button class="product-toggle ${active ? "active" : ""}" data-product-toggle="${product.asin}">${active ? "Activo" : "Pausado"}</button></article>`
+      }).join("")
+      productControls.innerHTML = `<button class="product-toggle master-control ${payload.masterActive ? "active" : ""}" data-master-toggle>${payload.masterActive ? "Pausar todo" : "Reanudar todo"}</button>${cards}`
+      productControls.querySelector<HTMLButtonElement>("[data-master-toggle]")?.addEventListener("click", () => void updateControl("/master", !payload.masterActive))
+      productControls.querySelectorAll<HTMLButtonElement>("[data-product-toggle]").forEach((button) => button.addEventListener("click", () => void updateControl(`/products/${button.dataset.productToggle}`, payload.enabledProducts[button.dataset.productToggle!] === false)))
+    }
     renderChart(payload.points)
     setControlStatus(`Monitor activo · actualizado ${new Date(payload.generatedAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`)
+  }
+
+  const updateControl = async (path: string, active: boolean) => {
+    try {
+      const response = await fetch(`${controlUrl}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active }) })
+      if (!response.ok) throw new Error("No se pudo actualizar")
+      await refreshDashboard()
+    } catch { setControlStatus("No se pudo conectar con el monitor") }
   }
 
   const refreshDashboard = async () => {

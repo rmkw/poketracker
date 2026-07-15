@@ -15,6 +15,7 @@ export type AmazonMxProduct = {
   hasPurchaseSignal: boolean
   deliveryRestrictionDetected: boolean
   url: string
+  imageUrl: string | null
   scrapedAt: string
 }
 
@@ -345,6 +346,7 @@ export const parseAmazonMxHtml = (
     hasPurchaseSignal,
     deliveryRestrictionDetected: detectDeliveryRestriction(purchaseContext),
     url,
+    imageUrl: getAttributeById(html, "landingImage", "src"),
     scrapedAt,
   }
 }
@@ -482,6 +484,86 @@ const fetchDecodoPage = async (url: string): Promise<AmazonPageResponse> => {
   return { html, status: response.status, provider: "decodo" }
 }
 
+type DecodoOffer = {
+  price?: unknown
+  currency?: unknown
+  seller?: unknown
+  delivery?: unknown
+}
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+
+const asText = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() ? value.trim() : null
+
+const asPrice = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null
+
+export const parseDecodoPricingProduct = (asin: string, payload: unknown): AmazonMxProduct | null => {
+  const root = asRecord(payload)
+  const firstResult = Array.isArray(root?.results) ? root?.results[0] : null
+  const content = asRecord(asRecord(firstResult)?.content)
+  const result = asRecord(content?.results ?? content)
+  if (!result) return null
+
+  const offers = Array.isArray(result.pricing)
+    ? result.pricing.map(asRecord).filter((offer): offer is Record<string, unknown> => offer !== null)
+    : []
+  const preferred = offers.find((offer) => {
+    const seller = asText(offer.seller)
+    const delivery = asText(offer.delivery)
+    return includesAmazonMx(seller) && includesAmazonMx(delivery)
+  }) ?? offers[0]
+  const seller = asText(preferred?.seller)
+  const delivery = asText(preferred?.delivery)
+  const shipper = normalizeParty(delivery?.replace(/^(?:envío|enviado)\s+por\s+/i, "") ?? null)
+  const price = asPrice(preferred?.price)
+  const url = asText(result.url) ?? `https://www.amazon.com.mx/dp/${asin}`
+  const available = Boolean(preferred && price !== null)
+
+  return {
+    asin,
+    title: asText(result.title),
+    price,
+    currency: asText(preferred?.currency) ?? "MXN",
+    availability: available ? "Oferta disponible" : "Sin artículos disponibles",
+    seller,
+    shipper,
+    isAvailable: available,
+    isAmazonSeller: includesAmazonMx(seller),
+    isAmazonShipper: includesAmazonMx(shipper),
+    hasPurchaseSignal: available,
+    deliveryRestrictionDetected: false,
+    url,
+    imageUrl: null,
+    scrapedAt: new Date().toISOString(),
+  }
+}
+
+const fetchDecodoPricing = async (asin: string): Promise<AmazonMxProduct | null> => {
+  const token = process.env.DECODO_AUTH_TOKEN?.trim()
+  if (!token || !hasRealDecodoToken()) throw new Error("Falta una credencial real en DECODO_AUTH_TOKEN")
+
+  const response = await fetch("https://scraper-api.decodo.com/v2/scrape", {
+    method: "POST",
+    headers: { Accept: "application/json", Authorization: `Basic ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      target: "amazon_pricing",
+      query: asin,
+      domain: "com.mx",
+      currency: "MXN",
+      ...(process.env.DECODO_GEO?.trim() ? { geo: process.env.DECODO_GEO.trim() } : {}),
+      parse: true,
+    }),
+    signal: AbortSignal.timeout(readTimeoutSeconds("DECODO_REQUEST_TIMEOUT_SECONDS", DEFAULT_DECODO_TIMEOUT_SECONDS) * 1_000),
+  })
+  if (!response.ok) throw new Error(`Decodo Pricing respondió ${response.status}`)
+  return parseDecodoPricingProduct(asin, await response.json())
+}
+
 const writeDiagnosticHtml = async (
   asin: string,
   html: string,
@@ -498,6 +580,10 @@ export const scrapeAmazonMxProduct = async (
 ): Promise<AmazonMxProduct> => {
   const url = `https://www.amazon.com.mx/dp/${asin}`
   const provider = getAmazonScraperProvider()
+  if (provider === "decodo") {
+    const parsed = await fetchDecodoPricing(asin)
+    if (parsed) return parsed
+  }
   const page =
     provider === "decodo"
       ? await fetchDecodoPage(url)

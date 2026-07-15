@@ -61,8 +61,10 @@ TELEGRAM_BOT_TOKEN=token_generado_por_botfather
 TELEGRAM_CHAT_ID=identificador_del_chat
 ```
 
-`AMAZON_ASINS` acepta una lista separada por comas. El mismo `MAX_PRICE` se
-aplica a todos; `POKEMON_ASIN` y `POKEMON_TARGET_PRICE` son nombres heredados.
+`AMAZON_PRODUCTS` configura límites individuales con `ASIN:precio`, separados
+por comas. El ejemplo vigila `B0H78BB9TY` hasta $1,300 y `B0H783FY5Z` hasta
+$600. `AMAZON_ASINS`, `MAX_PRICE` y `POKEMON_ASIN` siguen disponibles por
+compatibilidad.
 
 `.env` está ignorado por Git. No pongas tokens reales en `.env.example`.
 
@@ -70,6 +72,11 @@ Con `AMAZON_SCRAPER_PROVIDER=auto`, el monitor usa Decodo cuando encuentra una
 credencial real y conserva el acceso directo como respaldo. En esta conexión el
 acceso directo recibe CAPTCHA, por lo que Decodo es necesario para la prueba
 real. Turso no se utiliza en este flujo.
+
+Cuando usa Decodo, el monitor consulta el target `amazon_pricing` con JSON
+parseado y sin renderizado JavaScript. Así valida precio, vendedor y envío sin
+descargar HTML renderizado. Si el proveedor no puede responder, la revisión
+falla de forma segura y no genera una alerta incompleta.
 
 ## Comandos principales
 
@@ -97,6 +104,12 @@ no forzar el acceso directo de Amazon. Cada revisión consulta una vez por ASIN:
 dos ASIN cada minuto consumen 2,880 consultas diarias de Decodo.
 
 Detén el modo continuo con `Ctrl+C`.
+
+El dashboard local permite pausar/reanudar todo o cada producto individualmente.
+Un producto pausado no hace consultas a Decodo. Para Windows, ejecuta una vez
+`run-monitor.cmd` o programa ese archivo con el Programador de tareas usando el
+disparador **Al iniciar sesión**. El dashboard continúa en `http://127.0.0.1:4321`
+mientras ejecutes `pnpm dev`; sus controles se conectan solo al monitor local.
 
 ## Condiciones de la alerta
 

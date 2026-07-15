@@ -113,6 +113,7 @@ const formatProductStatus = (
     `Estado: ${availability}`,
     `Precio: ${status.lastPrice === null ? "sin precio" : money(status.lastPrice)} · máximo ${money(status.targetPrice)}`,
     `Última revisión: ${status.lastCheckedAt ? new Date(status.lastCheckedAt).toLocaleString("es-MX") : "sin datos"}`,
+    `Abrir producto: https://www.amazon.com.mx/dp/${status.asin}`,
     ...(status.lastError ? [`Error: ${status.lastError}`] : []),
   ].join("\n")
 }

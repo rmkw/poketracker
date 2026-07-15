@@ -7,6 +7,8 @@ export type PriceHistoryEntry = {
   seller: string | null
   shipper: string | null
   availability: string | null
+  isAvailable: boolean
+  hasPurchaseSignal: boolean
   scrapedAt: string
 }
 

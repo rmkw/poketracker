@@ -5,6 +5,10 @@ export type DashboardPoint = {
   price: number
   currency: string
   availability: string | null
+  seller?: string | null
+  shipper?: string | null
+  isAvailable?: boolean
+  hasPurchaseSignal?: boolean
   scrapedAt: string
 }
 

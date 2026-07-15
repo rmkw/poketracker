@@ -255,6 +255,8 @@ export const runCheck = async (
             seller: data.seller,
             shipper: data.shipper,
             availability: data.availability,
+            isAvailable: data.isAvailable,
+            hasPurchaseSignal: data.hasPurchaseSignal,
             scrapedAt: data.scrapedAt,
           },
           config.historyLimit,

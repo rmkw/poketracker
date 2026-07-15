@@ -14,6 +14,8 @@ test("guarda solamente cambios de precio y conserva el mínimo", async () => {
     seller: "Amazon México",
     shipper: "Amazon México",
     availability: "Disponible",
+    isAvailable: true,
+    hasPurchaseSignal: true,
   }
 
   try {

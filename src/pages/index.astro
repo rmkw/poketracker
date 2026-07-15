@@ -573,12 +573,16 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
   const plotTop = 16
   const plotBottom = 44
 
-  type Point = { asin: string; price: number; currency: string; availability: string | null; scrapedAt: string }
+type Point = { asin: string; price: number; currency: string; availability: string | null; seller?: string | null; shipper?: string | null; isAvailable?: boolean; hasPurchaseSignal?: boolean; scrapedAt: string }
   type Stats = { asin: string; totalChecks: number; successfulChecks: number; failedChecks: number; priceChanges: number; lastCheckedAt: string | null; lastPrice: number | null; lastError: string | null }
   type DashboardPayload = { points: Point[]; stats: Stats[]; checkIntervalMinutes: number; generatedAt: string }
 
   const money = (price: number) => `MX$${price.toLocaleString("es-MX", { maximumFractionDigits: 2 })}`
   const escapeHtml = (value: string) => value.replace(/[&<>"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]!)
+  const isPurchasable = (point: Point) =>
+    point.isAvailable !== false &&
+    point.hasPurchaseSignal !== false &&
+    !(point.isAvailable === undefined && point.hasPurchaseSignal === undefined && point.availability === null && point.seller == null && point.shipper == null)
 
   const renderInterval = (minutes: number) => {
     intervalButtons.forEach((button) => {
@@ -594,7 +598,10 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     if (!chartContainer || !chartLegend) return
     const now = Date.now()
     const start = now - 24 * 60 * 60 * 1_000
-    const windowPoints = points.filter((point) => new Date(point.scrapedAt).getTime() >= start)
+    const windowPoints = points.filter((point) =>
+      new Date(point.scrapedAt).getTime() >= start &&
+      isPurchasable(point),
+    )
     const prices = windowPoints.map((point) => point.price)
     const minPrice = prices.length > 0 ? Math.min(...prices) : 0
     const maxPrice = prices.length > 0 ? Math.max(...prices) : 1
@@ -651,10 +658,13 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     if (dashboardMeta) dashboardMeta.textContent = `${new Set(payload.points.map((point) => point.asin)).size} productos · ${payload.points.length} registros`
     if (monitorDetails) monitorDetails.innerHTML = stats.map((entry) => `<div class="monitor-detail"><strong>${escapeHtml(entry.asin)}</strong><span>Última revisión</span><b>${entry.lastCheckedAt ? escapeHtml(new Date(entry.lastCheckedAt).toLocaleString("es-MX")) : "Sin datos"}</b><span>Precio detectado</span><b>${entry.lastPrice != null ? money(entry.lastPrice) : "Sin datos"}</b>${entry.lastError ? `<small>Error: ${escapeHtml(entry.lastError)}</small>` : ""}</div>`).join("")
     if (priceFlow) {
-      priceFlow.innerHTML = payload.points.slice(-60).map((point) => {
+      priceFlow.innerHTML = payload.points
+        .filter(isPurchasable)
+        .slice(-60)
+        .map((point) => {
         const target = point.price <= 1_300
         return `<span class="flow-item ${target ? "target" : ""}"><b>${target ? "👑" : "💀"} ${money(point.price)}</b><small>${new Date(point.scrapedAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</small></span>`
-      }).join("")
+        }).join("")
       priceFlow.scrollLeft = priceFlow.scrollWidth
     }
     renderInterval(payload.checkIntervalMinutes)

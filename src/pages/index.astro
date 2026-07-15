@@ -288,7 +288,7 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     width: 8px;
   }
 
-  .price-flow {
+  :global(.price-flow) {
     background: #18181b;
     border: 1px solid #27272a;
     border-radius: 8px;
@@ -297,7 +297,7 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     padding: 0.85rem 1rem 1rem;
   }
 
-  .flow-head {
+  :global(.flow-head) {
     align-items: baseline;
     display: flex;
     gap: 0.65rem;
@@ -305,16 +305,16 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     margin-bottom: 0.75rem;
   }
 
-  .flow-head h2 {
+  :global(.flow-head h2) {
     color: #fafafa;
     font-size: 0.9rem;
     font-weight: 600;
     margin: 0;
   }
 
-  .flow-head span { color: #a1a1aa; font-size: 0.72rem; }
+  :global(.flow-head span) { color: #a1a1aa; font-size: 0.72rem; }
 
-  .flow-track {
+  :global(.flow-track) {
     display: flex;
     gap: 0.45rem;
     overflow-x: auto;
@@ -343,14 +343,14 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
   :global(.empty-reading) { color: #71717a; font-size: 0.8rem; padding: 0.8rem; }
 
   /* --- Chart --- */
-  .chart-box {
+  :global(.chart-box) {
     background: #18181b;
     border: 1px solid #27272a;
     border-radius: 8px;
     padding: 1rem;
   }
 
-  .chart-head {
+  :global(.chart-head) {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -359,14 +359,14 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     gap: 0.5rem;
   }
 
-  .chart-box h2 {
+  :global(.chart-box h2) {
     font-size: 0.85rem;
     font-weight: 500;
     margin: 0;
     color: #e4e4e7;
   }
 
-  .legend {
+  :global(.legend) {
     display: flex;
     gap: 1rem;
   }
@@ -380,13 +380,13 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     font-family: ui-monospace, monospace;
   }
 
-  .chart {
+  :global(.chart) {
     border-radius: 6px;
     overflow: hidden;
     position: relative;
   }
 
-  svg {
+  :global(.chart svg) {
     width: 100%;
     height: auto;
     display: block;
@@ -438,9 +438,9 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
   }
 
   @media (max-width: 640px) {
-    .chart-head { flex-direction: column; align-items: flex-start; }
+    :global(.chart-head) { flex-direction: column; align-items: flex-start; }
     .monitor-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .flow-head { align-items: flex-start; flex-direction: column; }
+    :global(.flow-head) { align-items: flex-start; flex-direction: column; }
     :global(.product-control-card) { grid-template-columns: 92px 1fr; }
     :global(.product-image) { height: 92px; width: 92px; }
     :global(.product-toggle) { grid-column: 1 / -1; width: 100%; }

@@ -61,8 +61,10 @@ TELEGRAM_BOT_TOKEN=token_generado_por_botfather
 TELEGRAM_CHAT_ID=identificador_del_chat
 ```
 
-`AMAZON_ASINS` acepta una lista separada por comas. El mismo `MAX_PRICE` se
-aplica a todos; `POKEMON_ASIN` y `POKEMON_TARGET_PRICE` son nombres heredados.
+`AMAZON_PRODUCTS` configura límites individuales con `ASIN:precio`, separados
+por comas. El ejemplo vigila `B0H78BB9TY` hasta $1,300 y `B0H783FY5Z` hasta
+$600. `AMAZON_ASINS`, `MAX_PRICE` y `POKEMON_ASIN` siguen disponibles por
+compatibilidad.
 
 `.env` está ignorado por Git. No pongas tokens reales en `.env.example`.
 
@@ -71,6 +73,11 @@ credencial real y conserva el acceso directo como respaldo. En esta conexión el
 acceso directo recibe CAPTCHA, por lo que Decodo es necesario para la prueba
 real. Turso no se utiliza en este flujo.
 
+Cuando usa Decodo, el monitor consulta el target `amazon_pricing` con JSON
+parseado y sin renderizado JavaScript. Así valida precio, vendedor y envío sin
+descargar HTML renderizado. Si el proveedor no puede responder, la revisión
+falla de forma segura y no genera una alerta incompleta.
+
 ## Comandos principales
 
 Prueba Telegram sin consultar Amazon:
@@ -78,6 +85,24 @@ Prueba Telegram sin consultar Amazon:
 ```bash
 pnpm telegram:test
 ```
+
+Comandos disponibles desde el chat autorizado del bot:
+
+```text
+/estado          estado general, intervalos y productos
+/intervalo1 10   cambiar el primer producto a 10 minutos
+/intervalo2 30   cambiar el segundo producto a 30 minutos
+/pausar_todo     detener las consultas de todos los productos
+/reanudar_todo   reanudar las consultas
+/pausar1         pausar el primer producto
+/reanudar1       reanudar el primer producto
+/pausar2         pausar el segundo producto
+/reanudar2       reanudar el segundo producto
+/ayuda           mostrar los comandos disponibles
+```
+
+También se puede indicar el ASIN, por ejemplo `/pausar B0H78BB9TY`. Un comando
+desconocido responde con ayuda y no detiene el monitor.
 
 Ejecuta una sola revisión:
 
@@ -91,12 +116,47 @@ Mantén el monitor activo localmente:
 pnpm track:mx:watch
 ```
 
-El modo continuo espera `CHECK_INTERVAL_MINUTES` entre revisiones. Con Decodo
-el mínimo aceptado es un minuto; sin Decodo se mantiene en cinco minutos para
-no forzar el acceso directo de Amazon. Cada revisión consulta una vez por ASIN:
-dos ASIN cada minuto consumen 2,880 consultas diarias de Decodo.
+`CHECK_INTERVAL_MINUTES` sólo define el intervalo inicial al crear la
+configuración local. Después, cada ASIN conserva por separado el intervalo
+seleccionado en el dashboard: 1, 5, 10, 30 o 60 minutos. Con Decodo el mínimo
+aceptado es un minuto; sin Decodo se recomienda usar al menos cinco minutos para
+no forzar el acceso directo de Amazon. Dos ASIN configurados a un minuto
+consumen 2,880 consultas diarias de Decodo; pausar uno o aumentar solamente su
+intervalo reduce su consumo sin afectar al otro.
 
 Detén el modo continuo con `Ctrl+C`.
+
+El dashboard local permite pausar/reanudar todo o cada producto individualmente.
+Un producto pausado no hace consultas a Decodo. Para Windows, ejecuta una vez
+`run-monitor.cmd` o programa ese archivo con el Programador de tareas usando el
+disparador **Al iniciar sesión**. El dashboard continúa en `http://127.0.0.1:4321`
+mientras ejecutes `pnpm dev`.
+
+## Acceso remoto seguro con Cloudflare Tunnel
+
+El dashboard usa `/monitor-api` en el mismo origen y Astro lo redirige al
+supervisor local en `127.0.0.1:3784`. Por eso un túnel debe publicar únicamente
+`http://localhost:4321`; los botones remotos siguen controlando el monitor local
+sin publicar el puerto 3784 por separado.
+
+En una PC de trabajo sin permisos de administrador se puede ejecutar el archivo
+independiente `cloudflared.exe` desde una carpeta del usuario. No instales el
+servicio de Windows. Crea un túnel administrado en Cloudflare, configura una ruta
+pública hacia `http://localhost:4321` y protégela con Cloudflare Access para
+permitir solamente tu correo.
+
+Mantén abiertas estas tres terminales:
+
+```text
+pnpm monitor:start
+pnpm dev
+cloudflared.exe tunnel run --token TU_TOKEN_DEL_TUNEL
+```
+
+El token del túnel es privado: no debe copiarse al `.env`, al repositorio ni a
+Telegram. Una URL temporal `trycloudflare.com` sirve para una prueba corta, pero
+no debe usarse como acceso permanente a este panel porque sus controles cambian
+el estado del monitor. Respeta además las políticas de red de la empresa.
 
 ## Condiciones de la alerta
 

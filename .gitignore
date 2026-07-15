@@ -20,6 +20,7 @@ diagnostics/
 .pokemon-monitor-stats.json
 .pokemon-monitor-settings.json
 .telegram-control-state.json
+.pokemon-product-metadata.json
 
 # environment variables
 .env

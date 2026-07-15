@@ -17,6 +17,7 @@
     "track:proxy": "tsx src/tracker/proxy-scraper.ts",
     "track:mx": "tsx src/tracker/pokemon-monitor.ts",
     "track:mx:watch": "tsx src/tracker/pokemon-monitor.ts --watch",
+    "monitor:start": "tsx src/tracker/pokemon-monitor.ts --watch",
     "monitor:pokemon": "tsx src/tracker/pokemon-monitor.ts",
     "telegram:test": "tsx src/tracker/test-telegram.ts"
   },

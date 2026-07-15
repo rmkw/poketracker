@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 
 export type PriceHistoryEntry = {
-  price: number
+  price: number | null
   currency: string
   seller: string | null
   shipper: string | null
@@ -56,12 +56,21 @@ const writeStore = async (
   await rename(temporaryFile, file)
 }
 
-const buildSummary = (entries: PriceHistoryEntry[]): PriceHistorySummary => ({
-  previousPrice: entries.at(-2)?.price ?? null,
-  lowestPrice:
-    entries.length > 0 ? Math.min(...entries.map((entry) => entry.price)) : null,
-  recent: entries.slice(-3),
-})
+const buildSummary = (entries: PriceHistoryEntry[]): PriceHistorySummary => {
+  const pricedEntries = entries.filter((entry) => entry.price !== null)
+  const previousPrice = entries
+    .slice(0, -1)
+    .reverse()
+    .find((entry) => entry.price !== null)?.price ?? null
+
+  return {
+    previousPrice,
+    lowestPrice: pricedEntries.length > 0
+      ? Math.min(...pricedEntries.map((entry) => entry.price!))
+      : null,
+    recent: entries.slice(-3),
+  }
+}
 
 export const recordPriceChange = async (
   file: string,

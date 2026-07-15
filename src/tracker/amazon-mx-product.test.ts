@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { parseAmazonMxHtml } from "./amazon-mx-product.js"
-import { buildSignature, shouldAlert, shouldAlertCandidate } from "./pokemon-monitor.js"
+import { buildCandidateMessage, buildMessage, buildSignature, shouldAlert, shouldAlertCandidate } from "./pokemon-monitor.js"
 
 const wrap = (body: string): string => `<html><body>${body}</body></html>`
 
@@ -119,4 +119,19 @@ test("la firma ignora cambios de texto que no alteran las condiciones", () => {
   const second = { ...first, availability: "En stock. Entrega el viernes." }
 
   assert.equal(buildSignature(first, 1_300), buildSignature(second, 1_300))
+})
+
+test("las alertas siempre usan la página canónica del producto", () => {
+  const product = parseAmazonMxHtml(
+    "B0H78BB9TY",
+    wrap(`<span id="productTitle">Pokémon TCG</span>`),
+  )
+  const decodoResult = {
+    ...product,
+    url: "https://www.amazon.com.mx/gp/product/ajax/aodAjaxMain?asin=B0H78BB9TY",
+  }
+
+  assert.match(buildMessage(decodoResult), /https:\/\/www\.amazon\.com\.mx\/dp\/B0H78BB9TY/)
+  assert.match(buildCandidateMessage(decodoResult), /https:\/\/www\.amazon\.com\.mx\/dp\/B0H78BB9TY/)
+  assert.doesNotMatch(buildMessage(decodoResult), /aodAjaxMain/)
 })

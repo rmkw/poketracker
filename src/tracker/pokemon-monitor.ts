@@ -19,8 +19,7 @@ import { sendTelegramMessage } from "./telegram.js"
 import { startTelegramControl } from "./telegram-control.js"
 
 export type MonitorConfig = {
-  asins: string[]
-  targetPrice: number
+  products: Array<{ asin: string; targetPrice: number }>
   stateFile: string
   historyFile: string
   historyLimit: number
@@ -34,7 +33,7 @@ export type MonitorConfig = {
 
 const DEFAULT_ASIN = "B0H78BB9TY"
 const DEFAULT_TARGET_PRICE = 1_300
-const DEFAULT_CHECK_INTERVAL_MINUTES = 15
+const DEFAULT_CHECK_INTERVAL_MINUTES = 5
 const DIRECT_MINIMUM_CHECK_INTERVAL_MINUTES = 5
 const DECODO_MINIMUM_CHECK_INTERVAL_MINUTES = 1
 const DEFAULT_HISTORY_LIMIT = 300
@@ -63,6 +62,19 @@ const getConfiguredAsins = (): string[] => {
   return asins
 }
 
+const getConfiguredProducts = (): Array<{ asin: string; targetPrice: number }> => {
+  const configured = process.env.AMAZON_PRODUCTS?.trim()
+  if (!configured) {
+    const price = readPositiveNumber(process.env.MAX_PRICE ?? process.env.POKEMON_TARGET_PRICE, DEFAULT_TARGET_PRICE, "MAX_PRICE")
+    return getConfiguredAsins().map((asin) => ({ asin, targetPrice: price }))
+  }
+  return configured.split(",").map((entry) => {
+    const [asin, price] = entry.trim().split(":")
+    if (!asin || !/^[A-Z0-9]{10}$/i.test(asin)) throw new Error(`ASIN inválido: ${asin}`)
+    return { asin: asin.toUpperCase(), targetPrice: readPositiveNumber(price, DEFAULT_TARGET_PRICE, `precio de ${asin}`) }
+  })
+}
+
 const readPositiveNumber = (
   value: string | undefined,
   fallback: number,
@@ -78,11 +90,6 @@ const readPositiveNumber = (
 }
 
 export const getMonitorConfig = (): MonitorConfig => {
-  const targetPrice = readPositiveNumber(
-    process.env.MAX_PRICE ?? process.env.POKEMON_TARGET_PRICE,
-    DEFAULT_TARGET_PRICE,
-    "MAX_PRICE",
-  )
   const checkIntervalMinutes = readPositiveNumber(
     process.env.CHECK_INTERVAL_MINUTES,
     DEFAULT_CHECK_INTERVAL_MINUTES,
@@ -101,8 +108,7 @@ export const getMonitorConfig = (): MonitorConfig => {
   }
 
   return {
-    asins: getConfiguredAsins(),
-    targetPrice,
+    products: getConfiguredProducts(),
     stateFile:
       process.env.POKEMON_ALERT_STATE_FILE ?? ".pokemon-alert-state.json",
     historyFile: process.env.PRICE_HISTORY_FILE ?? ".pokemon-price-history.json",
@@ -166,7 +172,7 @@ export const buildMessage = (data: AmazonMxProduct): string =>
     `Producto: ${data.title ?? data.asin}`,
     "Disponible en Amazon México.",
     "Abrir producto:",
-    data.url,
+    `https://www.amazon.com.mx/dp/${data.asin}`,
   ].join("\n")
 
 export const buildCandidateMessage = (data: AmazonMxProduct): string =>
@@ -178,7 +184,7 @@ export const buildCandidateMessage = (data: AmazonMxProduct): string =>
     `Envío: ${data.shipper ?? "sin confirmar"}`,
     "No es una oferta confirmada por Amazon México; revisa antes de comprar.",
     "Abrir producto:",
-    data.url,
+    `https://www.amazon.com.mx/dp/${data.asin}`,
   ].join("\n")
 
 const logProduct = (
@@ -230,7 +236,7 @@ export type CheckResult = {
 }
 
 const stateFileForAsin = (config: MonitorConfig, asin: string): string => {
-  if (config.asins.length === 1) return config.stateFile
+  if (config.products.length === 1) return config.stateFile
 
   const extension = extname(config.stateFile)
   const filename = basename(config.stateFile, extension)
@@ -243,28 +249,26 @@ export const runCheck = async (
 ): Promise<CheckResult> => {
   const data = await scrapeAmazonMxProduct(asin)
   const state = await readAlertState(stateFileForAsin(config, asin))
-  const history =
-    data.price === null
-      ? { previousPrice: null, lowestPrice: null, recent: [] }
-      : await recordPriceObservation(
-          config.historyFile,
-          asin,
-          {
-            price: data.price,
-            currency: data.currency ?? "MXN",
-            seller: data.seller,
-            shipper: data.shipper,
-            availability: data.availability,
-            isAvailable: data.isAvailable,
-            hasPurchaseSignal: data.hasPurchaseSignal,
-            scrapedAt: data.scrapedAt,
-          },
-          config.historyLimit,
-        )
-  const signature = buildSignature(data, config.targetPrice)
-  const eligible = shouldAlert(data, config.targetPrice)
-  const candidate = shouldAlertCandidate(data, config.targetPrice)
-  const alertable = eligible || candidate
+  const history = await recordPriceObservation(
+    config.historyFile,
+    asin,
+    {
+      price: data.price,
+      currency: data.currency ?? "MXN",
+      seller: data.seller,
+      shipper: data.shipper,
+      availability: data.availability,
+      isAvailable: data.isAvailable,
+      hasPurchaseSignal: data.hasPurchaseSignal,
+      scrapedAt: data.scrapedAt,
+    },
+    config.historyLimit,
+  )
+  const targetPrice = config.products.find((product) => product.asin === asin)?.targetPrice ?? DEFAULT_TARGET_PRICE
+  const signature = buildSignature(data, targetPrice)
+  const eligible = shouldAlert(data, targetPrice)
+  const candidate = false
+  const alertable = eligible
   const changed = signature !== state.signature
   const priceChanged =
     data.price !== null && history.previousPrice !== null && history.previousPrice !== data.price
@@ -312,10 +316,10 @@ export const runCheck = async (
   return { data, eligible, candidate, changed, priceChanged, alertSent }
 }
 
-const runAllChecks = async (config: MonitorConfig): Promise<CheckResult[]> => {
+const runAllChecks = async (config: MonitorConfig, asins = config.products.map((product) => product.asin)): Promise<CheckResult[]> => {
   const results: CheckResult[] = []
 
-  for (const asin of config.asins) {
+  for (const asin of asins) {
     try {
       results.push(await runCheck(config, asin))
     } catch (error) {
@@ -345,22 +349,46 @@ const sendStatusMessage = async (text: string): Promise<void> => {
 const runWatchMode = async (config: MonitorConfig): Promise<void> => {
   let stopRequested = false
   let wakeWait: (() => void) | null = null
-  let checkIntervalMinutes = config.checkIntervalMinutes
+  const nextDueAt = new Map(config.products.map((product) => [product.asin, 0]))
 
   const control = await startMonitorControl({
     initialIntervalMinutes: config.checkIntervalMinutes,
+    products: config.products,
     settingsFile: config.settingsFile,
     port: config.controlPort,
     getDashboardData: () => readDashboardData(config.historyFile, config.statsFile),
-    onIntervalChange: (minutes) => {
-      checkIntervalMinutes = minutes
+    onScheduleChange: (asin) => {
+      if (asin) nextDueAt.set(asin, 0)
       wakeWait?.()
     },
   })
   const telegramControl = startTelegramControl({
     stateFile: config.telegramControlStateFile,
-    getInterval: () => checkIntervalMinutes,
-    setInterval: control.setCheckIntervalMinutes,
+    products: config.products,
+    getProductInterval: control.getProductInterval,
+    getMasterActive: () => control.masterActive,
+    isProductEnabled: control.isProductEnabled,
+    getProductStatuses: async () => {
+      const dashboard = await readDashboardData(config.historyFile, config.statsFile)
+      return config.products.map((product) => {
+        const stats = dashboard.stats.find((entry) => entry.asin === product.asin)
+        const latest = dashboard.points.filter((point) => point.asin === product.asin).at(-1)
+        return {
+          asin: product.asin,
+          targetPrice: product.targetPrice,
+          lastPrice: stats?.lastPrice ?? null,
+          lastCheckedAt: stats?.lastCheckedAt ?? null,
+          lastError: stats?.lastError ?? null,
+          availability: latest?.availability ?? null,
+          seller: latest?.seller ?? null,
+          shipper: latest?.shipper ?? null,
+          isAvailable: latest?.isAvailable,
+        }
+      })
+    },
+    setProductInterval: control.setProductInterval,
+    setMasterActive: control.setMasterActive,
+    setProductEnabled: control.setProductEnabled,
   })
 
   const requestStop = () => {
@@ -373,34 +401,60 @@ const runWatchMode = async (config: MonitorConfig): Promise<void> => {
 
   try {
     await sendStatusMessage(
-      `Monitor Pokemon MX activo. Revisiones cada ${control.checkIntervalMinutes} minuto(s).`,
+      [
+        "Monitor Pokemon MX activo.",
+        ...config.products.map((product) => `${product.asin}: cada ${control.getProductInterval(product.asin)} minuto(s).`),
+      ].join("\n"),
     )
 
     while (!stopRequested) {
-      const startedAt = Date.now()
+      const now = Date.now()
+      const activeAsins = control.masterActive
+        ? config.products.filter((product) => control.isProductEnabled(product.asin)).map((product) => product.asin)
+        : []
+      const dueAsins = activeAsins.filter((asin) => (nextDueAt.get(asin) ?? 0) <= now)
 
       try {
-        await runAllChecks(config)
+        if (!control.masterActive) {
+          console.log("Monitor pausado desde el dashboard; no se hicieron consultas")
+        } else if (activeAsins.length === 0) {
+          console.log("Todos los productos están pausados; no se hicieron consultas")
+        } else if (dueAsins.length > 0) {
+          await runAllChecks(config, dueAsins)
+        } else {
+          console.log("Ningún producto requiere revisión todavía")
+        }
       } catch (error) {
         console.error(
           `[${new Date().toISOString()}] Revisión falló: ${formatError(error)}`,
         )
+      } finally {
+        const completedAt = Date.now()
+        for (const asin of dueAsins) {
+          nextDueAt.set(asin, completedAt + control.getProductInterval(asin) * 60_000)
+        }
       }
 
       if (stopRequested) break
 
-      const intervalMs = checkIntervalMinutes * 60_000
-      const remainingMs = Math.max(0, intervalMs - (Date.now() - startedAt))
-      const nextCheckAt = new Date(Date.now() + remainingMs).toISOString()
-      console.log(`Siguiente revisión: ${nextCheckAt}`)
+      const scheduledAsins = control.masterActive
+        ? config.products.filter((product) => control.isProductEnabled(product.asin)).map((product) => product.asin)
+        : []
+      const nextCheckAt = scheduledAsins.length > 0
+        ? Math.min(...scheduledAsins.map((asin) => nextDueAt.get(asin) ?? 0))
+        : null
+      const remainingMs = nextCheckAt === null ? null : Math.max(0, nextCheckAt - Date.now())
+      console.log(nextCheckAt === null
+        ? "Sin revisiones programadas hasta que se reactive el monitor"
+        : `Siguiente revisión: ${new Date(nextCheckAt).toISOString()}`)
 
       await new Promise<void>((resolveWait) => {
         const finish = () => {
-          clearTimeout(timer)
+          if (timer) clearTimeout(timer)
           wakeWait = null
           resolveWait()
         }
-        const timer = setTimeout(finish, remainingMs)
+        const timer = remainingMs === null ? null : setTimeout(finish, remainingMs)
         wakeWait = finish
       })
     }

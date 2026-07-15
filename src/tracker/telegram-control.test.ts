@@ -12,6 +12,12 @@ test("interpreta controles maestros e individuales de Telegram", () => {
     active: true,
     asin: "B0H783FY5Z",
   })
+  assert.deepEqual(parseTelegramCommand("/intervalo1 10"), { kind: "interval", minutes: 10, index: 1 })
+  assert.deepEqual(parseTelegramCommand("/intervalo B0H783FY5Z 60"), {
+    kind: "interval",
+    minutes: 60,
+    asin: "B0H783FY5Z",
+  })
 })
 
 test("un comando desconocido se maneja sin lanzar una excepción", () => {

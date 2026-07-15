@@ -33,7 +33,7 @@ export type MonitorConfig = {
 
 const DEFAULT_ASIN = "B0H78BB9TY"
 const DEFAULT_TARGET_PRICE = 1_300
-const DEFAULT_CHECK_INTERVAL_MINUTES = 15
+const DEFAULT_CHECK_INTERVAL_MINUTES = 5
 const DIRECT_MINIMUM_CHECK_INTERVAL_MINUTES = 5
 const DECODO_MINIMUM_CHECK_INTERVAL_MINUTES = 1
 const DEFAULT_HISTORY_LIMIT = 300
@@ -349,7 +349,7 @@ const sendStatusMessage = async (text: string): Promise<void> => {
 const runWatchMode = async (config: MonitorConfig): Promise<void> => {
   let stopRequested = false
   let wakeWait: (() => void) | null = null
-  let checkIntervalMinutes = config.checkIntervalMinutes
+  const nextDueAt = new Map(config.products.map((product) => [product.asin, 0]))
 
   const control = await startMonitorControl({
     initialIntervalMinutes: config.checkIntervalMinutes,
@@ -357,15 +357,15 @@ const runWatchMode = async (config: MonitorConfig): Promise<void> => {
     settingsFile: config.settingsFile,
     port: config.controlPort,
     getDashboardData: () => readDashboardData(config.historyFile, config.statsFile),
-    onIntervalChange: (minutes) => {
-      checkIntervalMinutes = minutes
+    onScheduleChange: (asin) => {
+      if (asin) nextDueAt.set(asin, 0)
       wakeWait?.()
     },
   })
   const telegramControl = startTelegramControl({
     stateFile: config.telegramControlStateFile,
     products: config.products,
-    getInterval: () => checkIntervalMinutes,
+    getProductInterval: control.getProductInterval,
     getMasterActive: () => control.masterActive,
     isProductEnabled: control.isProductEnabled,
     getProductStatuses: async () => {
@@ -386,7 +386,7 @@ const runWatchMode = async (config: MonitorConfig): Promise<void> => {
         }
       })
     },
-    setInterval: control.setCheckIntervalMinutes,
+    setProductInterval: control.setProductInterval,
     setMasterActive: control.setMasterActive,
     setProductEnabled: control.setProductEnabled,
   })
@@ -401,40 +401,60 @@ const runWatchMode = async (config: MonitorConfig): Promise<void> => {
 
   try {
     await sendStatusMessage(
-      `Monitor Pokemon MX activo. Revisiones cada ${control.checkIntervalMinutes} minuto(s).`,
+      [
+        "Monitor Pokemon MX activo.",
+        ...config.products.map((product) => `${product.asin}: cada ${control.getProductInterval(product.asin)} minuto(s).`),
+      ].join("\n"),
     )
 
     while (!stopRequested) {
-      const startedAt = Date.now()
+      const now = Date.now()
+      const activeAsins = control.masterActive
+        ? config.products.filter((product) => control.isProductEnabled(product.asin)).map((product) => product.asin)
+        : []
+      const dueAsins = activeAsins.filter((asin) => (nextDueAt.get(asin) ?? 0) <= now)
 
       try {
         if (!control.masterActive) {
           console.log("Monitor pausado desde el dashboard; no se hicieron consultas")
+        } else if (activeAsins.length === 0) {
+          console.log("Todos los productos están pausados; no se hicieron consultas")
+        } else if (dueAsins.length > 0) {
+          await runAllChecks(config, dueAsins)
         } else {
-          const activeAsins = config.products.filter((product) => control.isProductEnabled(product.asin)).map((product) => product.asin)
-          if (activeAsins.length === 0) console.log("Todos los productos están pausados; no se hicieron consultas")
-          else await runAllChecks(config, activeAsins)
+          console.log("Ningún producto requiere revisión todavía")
         }
       } catch (error) {
         console.error(
           `[${new Date().toISOString()}] Revisión falló: ${formatError(error)}`,
         )
+      } finally {
+        const completedAt = Date.now()
+        for (const asin of dueAsins) {
+          nextDueAt.set(asin, completedAt + control.getProductInterval(asin) * 60_000)
+        }
       }
 
       if (stopRequested) break
 
-      const intervalMs = checkIntervalMinutes * 60_000
-      const remainingMs = Math.max(0, intervalMs - (Date.now() - startedAt))
-      const nextCheckAt = new Date(Date.now() + remainingMs).toISOString()
-      console.log(`Siguiente revisión: ${nextCheckAt}`)
+      const scheduledAsins = control.masterActive
+        ? config.products.filter((product) => control.isProductEnabled(product.asin)).map((product) => product.asin)
+        : []
+      const nextCheckAt = scheduledAsins.length > 0
+        ? Math.min(...scheduledAsins.map((asin) => nextDueAt.get(asin) ?? 0))
+        : null
+      const remainingMs = nextCheckAt === null ? null : Math.max(0, nextCheckAt - Date.now())
+      console.log(nextCheckAt === null
+        ? "Sin revisiones programadas hasta que se reactive el monitor"
+        : `Siguiente revisión: ${new Date(nextCheckAt).toISOString()}`)
 
       await new Promise<void>((resolveWait) => {
         const finish = () => {
-          clearTimeout(timer)
+          if (timer) clearTimeout(timer)
           wakeWait = null
           resolveWait()
         }
-        const timer = setTimeout(finish, remainingMs)
+        const timer = remainingMs === null ? null : setTimeout(finish, remainingMs)
         wakeWait = finish
       })
     }

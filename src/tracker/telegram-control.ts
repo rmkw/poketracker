@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises"
 
 import { sendTelegramMessage } from "./telegram.js"
+import { isAllowedCheckInterval, type CheckIntervalMinutes } from "./monitor-settings.js"
 
 type TelegramUpdate = {
   update_id: number
@@ -28,7 +29,7 @@ const writeOffset = async (file: string, offset: number): Promise<void> => {
 }
 
 export type TelegramCommand =
-  | { kind: "interval"; minutes: 1 | 5 }
+  | { kind: "interval"; minutes: CheckIntervalMinutes; asin?: string; index?: number }
   | { kind: "status" }
   | { kind: "help" }
   | { kind: "master"; active: boolean }
@@ -37,9 +38,14 @@ export type TelegramCommand =
 
 export const parseTelegramCommand = (text: string): TelegramCommand | null => {
   const normalized = text.trim().toLowerCase().replace(/^\/([^\s@]+)@[^\s]+/, "/$1")
-  const [name = "", argument] = normalized.split(/\s+/, 2)
-  if (["/1min", "/1", "1 min", "1"].includes(normalized)) return { kind: "interval", minutes: 1 }
-  if (["/5min", "/5", "5 min", "5"].includes(normalized)) return { kind: "interval", minutes: 5 }
+  const [name = "", argument, intervalArgument] = normalized.split(/\s+/, 3)
+  const indexedInterval = name.match(/^\/(?:intervalo|frecuencia)(\d+)$/)
+  if (indexedInterval && isAllowedCheckInterval(Number(argument))) {
+    return { kind: "interval", minutes: Number(argument) as CheckIntervalMinutes, index: Number(indexedInterval[1]) }
+  }
+  if (["/intervalo", "/frecuencia"].includes(name) && argument?.match(/^[a-z0-9]{10}$/i) && isAllowedCheckInterval(Number(intervalArgument))) {
+    return { kind: "interval", minutes: Number(intervalArgument) as CheckIntervalMinutes, asin: argument.toUpperCase() }
+  }
   if (["/estado", "/status", "estado"].includes(normalized)) return { kind: "status" }
   if (["/ayuda", "/help", "/comandos"].includes(normalized)) return { kind: "help" }
 
@@ -68,12 +74,12 @@ export const parseTelegramCommand = (text: string): TelegramCommand | null => {
 const helpMessage = (products: Array<{ asin: string }>): string => [
   "Comandos del monitor Pokemon MX:",
   "/estado - estado general",
-  "/1min o /5min - cambiar frecuencia",
   "/pausar_todo - pausar todas las consultas",
   "/reanudar_todo - reanudar todas las consultas",
   ...products.flatMap((product, index) => [
     `/pausar${index + 1} - pausar ${product.asin}`,
     `/reanudar${index + 1} - reanudar ${product.asin}`,
+    `/intervalo${index + 1} 10 - cambiar frecuencia de ${product.asin}`,
   ]),
   "/ayuda - mostrar estos comandos",
 ].join("\n")
@@ -97,6 +103,7 @@ const formatProductStatus = (
   index: number,
   enabled: boolean,
   masterActive: boolean,
+  intervalMinutes: number,
 ): string => {
   const parties = [status.seller, status.shipper].filter(Boolean).join(" ")
   const thirdParty = parties.length > 0 && !/amazon/i.test(parties)
@@ -110,6 +117,7 @@ const formatProductStatus = (
   return [
     `${index + 1}. ${status.asin}`,
     `Monitor: ${monitor}`,
+    `Intervalo: cada ${intervalMinutes} minuto(s)`,
     `Estado: ${availability}`,
     `Precio: ${status.lastPrice === null ? "sin precio" : money(status.lastPrice)} · máximo ${money(status.targetPrice)}`,
     `Última revisión: ${status.lastCheckedAt ? new Date(status.lastCheckedAt).toLocaleString("es-MX") : "sin datos"}`,
@@ -121,21 +129,21 @@ const formatProductStatus = (
 export const startTelegramControl = ({
   stateFile,
   products,
-  getInterval,
+  getProductInterval,
   getMasterActive,
   isProductEnabled,
   getProductStatuses,
-  setInterval,
+  setProductInterval,
   setMasterActive,
   setProductEnabled,
 }: {
   stateFile: string
   products: Array<{ asin: string; targetPrice: number }>
-  getInterval: () => number
+  getProductInterval: (asin: string) => number
   getMasterActive: () => boolean
   isProductEnabled: (asin: string) => boolean
   getProductStatuses: () => Promise<TelegramProductStatus[]>
-  setInterval: (minutes: number) => Promise<void>
+  setProductInterval: (asin: string, minutes: number) => Promise<void>
   setMasterActive: (active: boolean) => Promise<void>
   setProductEnabled: (asin: string, active: boolean) => Promise<void>
 }): { close: () => void } => {
@@ -177,16 +185,21 @@ export const startTelegramControl = ({
             const masterActive = getMasterActive()
             await sendTelegramMessage([
               `Monitor general: ${masterActive ? "activo" : "pausado"}`,
-              `Revisiones cada ${getInterval()} minuto(s).`,
               "",
               ...productStatuses.flatMap((status, index) => [
-                formatProductStatus(status, index, isProductEnabled(status.asin), masterActive),
+                formatProductStatus(status, index, isProductEnabled(status.asin), masterActive, getProductInterval(status.asin)),
                 "",
               ]),
             ].join("\n"))
           } else if (command.kind === "interval") {
-            await setInterval(command.minutes)
-            await sendTelegramMessage(`Frecuencia actualizada a ${command.minutes} minuto(s).`)
+            const product = command.asin
+              ? products.find((entry) => entry.asin === command.asin)
+              : command.index
+                ? products[command.index - 1]
+                : undefined
+            if (!product) throw new Error("Ese producto no está configurado")
+            await setProductInterval(product.asin, command.minutes)
+            await sendTelegramMessage(`${product.asin} revisará cada ${command.minutes} minuto(s).`)
           } else if (command.kind === "master") {
             await setMasterActive(command.active)
             await sendTelegramMessage(`Monitor general ${command.active ? "reanudado" : "pausado"}.`)

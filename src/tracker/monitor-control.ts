@@ -1,7 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
-import { readMonitorSettings, writeMonitorSettings, type MonitorSettings } from "./monitor-settings.js"
+import { isAllowedCheckInterval, readMonitorSettings, writeMonitorSettings } from "./monitor-settings.js"
 
-const allowedIntervals = new Set([1, 5])
 const allowedOrigins = new Set(["http://127.0.0.1:4321", "http://localhost:4321"])
 
 const sendJson = (request: IncomingMessage, response: ServerResponse, status: number, body: unknown): void => {
@@ -25,10 +24,10 @@ const readBody = async (request: IncomingMessage): Promise<string> => {
 }
 
 export type MonitorControl = {
-  checkIntervalMinutes: number
   masterActive: boolean
   isProductEnabled: (asin: string) => boolean
-  setCheckIntervalMinutes: (minutes: number) => Promise<void>
+  getProductInterval: (asin: string) => number
+  setProductInterval: (asin: string, minutes: number) => Promise<void>
   setMasterActive: (active: boolean) => Promise<void>
   setProductEnabled: (asin: string, active: boolean) => Promise<void>
   close: () => Promise<void>
@@ -39,42 +38,48 @@ export const startMonitorControl = async ({
   products,
   settingsFile,
   port,
-  onIntervalChange,
+  onScheduleChange,
   getDashboardData,
 }: {
   initialIntervalMinutes: number
   products: Array<{ asin: string; targetPrice: number }>
   settingsFile: string
   port: number
-  onIntervalChange: (minutes: number) => void
+  onScheduleChange: (asin?: string) => void
   getDashboardData: () => Promise<object>
 }): Promise<MonitorControl> => {
+  const defaultInterval = isAllowedCheckInterval(initialIntervalMinutes) ? initialIntervalMinutes : 5
   let settings = await readMonitorSettings(settingsFile, {
-    checkIntervalMinutes: initialIntervalMinutes,
     masterActive: true,
     enabledProducts: Object.fromEntries(products.map((product) => [product.asin, true])),
+    productIntervals: Object.fromEntries(products.map((product) => [product.asin, defaultInterval])),
   })
-  onIntervalChange(settings.checkIntervalMinutes)
 
-  const setCheckIntervalMinutes = async (minutes: number): Promise<void> => {
-    if (!allowedIntervals.has(minutes)) throw new Error("El intervalo debe ser 1 o 5 minutos")
-    settings = { ...settings, checkIntervalMinutes: minutes }
+  const requireProduct = (asinInput: string): string => {
+    const asin = asinInput.toUpperCase()
+    if (!products.some((product) => product.asin === asin)) throw new Error(`Producto no configurado: ${asin}`)
+    return asin
+  }
+
+  const setProductInterval = async (asinInput: string, minutes: number): Promise<void> => {
+    const asin = requireProduct(asinInput)
+    if (!isAllowedCheckInterval(minutes)) throw new Error("El intervalo debe ser 1, 5, 10, 30 o 60 minutos")
+    settings = { ...settings, productIntervals: { ...settings.productIntervals, [asin]: minutes } }
     await writeMonitorSettings(settingsFile, settings)
-    onIntervalChange(minutes)
+    onScheduleChange(asin)
   }
 
   const setMasterActive = async (active: boolean): Promise<void> => {
     settings = { ...settings, masterActive: active }
     await writeMonitorSettings(settingsFile, settings)
-    onIntervalChange(settings.checkIntervalMinutes)
+    onScheduleChange()
   }
 
   const setProductEnabled = async (asinInput: string, active: boolean): Promise<void> => {
-    const asin = asinInput.toUpperCase()
-    if (!products.some((product) => product.asin === asin)) throw new Error(`Producto no configurado: ${asin}`)
+    const asin = requireProduct(asinInput)
     settings = { ...settings, enabledProducts: { ...settings.enabledProducts, [asin]: active } }
     await writeMonitorSettings(settingsFile, settings)
-    onIntervalChange(settings.checkIntervalMinutes)
+    onScheduleChange(asin)
   }
 
   const server = createServer(async (request, response) => {
@@ -104,18 +109,6 @@ export const startMonitorControl = async ({
       return
     }
 
-    if (request.method === "POST" && request.url === "/interval") {
-      try {
-        const payload = JSON.parse(await readBody(request)) as { checkIntervalMinutes?: unknown }
-        const minutes = Number(payload.checkIntervalMinutes)
-        await setCheckIntervalMinutes(minutes)
-        sendJson(request, response, 200, settings)
-      } catch (error) {
-        sendJson(request, response, 400, { error: error instanceof Error ? error.message : "Solicitud invalida" })
-      }
-      return
-    }
-
     if (request.method === "POST" && request.url === "/master") {
       const payload = JSON.parse(await readBody(request)) as { active?: unknown }
       await setMasterActive(Boolean(payload.active))
@@ -136,6 +129,19 @@ export const startMonitorControl = async ({
       return
     }
 
+    const productIntervalMatch = request.url?.match(/^\/products\/([A-Z0-9]{10})\/interval$/i)
+    if (request.method === "POST" && productIntervalMatch) {
+      const asin = productIntervalMatch[1]!.toUpperCase()
+      try {
+        const payload = JSON.parse(await readBody(request)) as { checkIntervalMinutes?: unknown }
+        await setProductInterval(asin, Number(payload.checkIntervalMinutes))
+        sendJson(request, response, 200, settings)
+      } catch (error) {
+        sendJson(request, response, 400, { error: error instanceof Error ? error.message : "Solicitud inválida" })
+      }
+      return
+    }
+
     sendJson(request, response, 404, { error: "No encontrado" })
   })
 
@@ -148,12 +154,10 @@ export const startMonitorControl = async ({
   })
 
   return {
-    get checkIntervalMinutes() {
-      return settings.checkIntervalMinutes
-    },
     get masterActive() { return settings.masterActive },
     isProductEnabled: (asin) => settings.enabledProducts[asin] !== false,
-    setCheckIntervalMinutes,
+    getProductInterval: (asin) => settings.productIntervals[asin] ?? defaultInterval,
+    setProductInterval,
     setMasterActive,
     setProductEnabled,
     close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),

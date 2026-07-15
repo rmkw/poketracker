@@ -89,9 +89,9 @@ pnpm telegram:test
 Comandos disponibles desde el chat autorizado del bot:
 
 ```text
-/estado          estado general, intervalo y productos
-/1min            revisar cada minuto
-/5min            revisar cada cinco minutos
+/estado          estado general, intervalos y productos
+/intervalo1 10   cambiar el primer producto a 10 minutos
+/intervalo2 30   cambiar el segundo producto a 30 minutos
 /pausar_todo     detener las consultas de todos los productos
 /reanudar_todo   reanudar las consultas
 /pausar1         pausar el primer producto
@@ -116,10 +116,13 @@ Mantén el monitor activo localmente:
 pnpm track:mx:watch
 ```
 
-El modo continuo espera `CHECK_INTERVAL_MINUTES` entre revisiones. Con Decodo
-el mínimo aceptado es un minuto; sin Decodo se mantiene en cinco minutos para
-no forzar el acceso directo de Amazon. Cada revisión consulta una vez por ASIN:
-dos ASIN cada minuto consumen 2,880 consultas diarias de Decodo.
+`CHECK_INTERVAL_MINUTES` sólo define el intervalo inicial al crear la
+configuración local. Después, cada ASIN conserva por separado el intervalo
+seleccionado en el dashboard: 1, 5, 10, 30 o 60 minutos. Con Decodo el mínimo
+aceptado es un minuto; sin Decodo se recomienda usar al menos cinco minutos para
+no forzar el acceso directo de Amazon. Dos ASIN configurados a un minuto
+consumen 2,880 consultas diarias de Decodo; pausar uno o aumentar solamente su
+intervalo reduce su consumo sin afectar al otro.
 
 Detén el modo continuo con `Ctrl+C`.
 

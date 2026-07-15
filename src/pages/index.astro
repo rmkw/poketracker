@@ -116,12 +116,7 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
       </section>
     )}
 
-    <section class="interval-control" aria-label="Intervalo de revisión">
-      <span>Revisar cada</span>
-      <div class="interval-switch" data-monitor-control>
-        <button type="button" data-minutes="1">1 min</button>
-        <button type="button" data-minutes="5">5 min</button>
-      </div>
+    <section class="interval-control" aria-label="Controles del monitor">
       <span class="control-status" data-control-status>Conectando con el monitor...</span>
       <span class="master-controls" aria-label="Control general" data-master-controls></span>
     </section>
@@ -231,26 +226,11 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
   :global(.stock-status.reseller) { color: #fbbf24; }
   :global(.product-toggle) { align-self: center; background: #27272a; border: 1px solid #52525b; color: #e4e4e7; cursor: pointer; padding: 0.4rem 0.55rem; }
   :global(.product-toggle.active) { border-color: #16a34a; color: #86efac; }
+  :global(.product-actions) { align-content: center; display: grid; gap: 0.75rem; justify-items: end; }
+  :global(.product-interval) { color: #a1a1aa; display: grid; font-size: 0.72rem; gap: 0.3rem; }
+  :global(.product-interval select) { background: #27272a; border: 1px solid #52525b; color: #e4e4e7; cursor: pointer; font: inherit; min-width: 7.5rem; padding: 0.4rem; }
+  :global(.product-interval select:disabled) { cursor: wait; opacity: 0.6; }
   :global(.master-control) { grid-column: 1 / -1; }
-
-  .interval-switch {
-    border: 1px solid #3f3f46;
-    display: inline-flex;
-  }
-
-  .interval-switch button {
-    background: transparent;
-    border: 0;
-    color: #a1a1aa;
-    cursor: pointer;
-    font: inherit;
-    min-width: 4.5rem;
-    padding: 0.4rem 0.6rem;
-  }
-
-  .interval-switch button + button { border-left: 1px solid #3f3f46; }
-  .interval-switch button.active { background: #e4e4e7; color: #18181b; }
-  .interval-switch button:disabled { cursor: wait; opacity: 0.6; }
   .control-status { color: #71717a; }
 
   .monitor-stats strong {
@@ -484,14 +464,13 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     :global(.flow-head) { align-items: flex-start; flex-direction: column; }
     :global(.product-control-card) { grid-template-columns: 92px 1fr; }
     :global(.product-image) { height: 92px; width: 92px; }
-    :global(.product-toggle) { grid-column: 1 / -1; width: 100%; }
+    :global(.product-actions) { grid-column: 1 / -1; justify-items: stretch; }
+    :global(.product-toggle) { width: 100%; }
   }
 </style>
 
 <script>
-  const monitorControl = document.querySelector<HTMLElement>("[data-monitor-control]")
   const controlStatus = document.querySelector<HTMLElement>("[data-control-status]")
-  const intervalButtons = monitorControl?.querySelectorAll<HTMLButtonElement>("button[data-minutes]") ?? []
   const masterControls = document.querySelector<HTMLElement>("[data-master-controls]")
   const productsDashboard = document.querySelector<HTMLElement>("[data-products-dashboard]")
   const chartContainer = document.getElementById("chart-container")
@@ -516,7 +495,7 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
   type Point = { asin: string; price: number | null; currency: string; availability: string | null; seller?: string | null; shipper?: string | null; isAvailable?: boolean; hasPurchaseSignal?: boolean; scrapedAt: string }
   type Stats = { asin: string; totalChecks: number; successfulChecks: number; failedChecks: number; priceChanges: number; lastCheckedAt: string | null; lastPrice: number | null; lastError: string | null }
   type Product = { asin: string; targetPrice: number }
-  type DashboardPayload = { points: Point[]; stats: Stats[]; products: Product[]; checkIntervalMinutes: number; masterActive: boolean; enabledProducts: Record<string, boolean>; generatedAt: string }
+  type DashboardPayload = { points: Point[]; stats: Stats[]; products: Product[]; productIntervals: Record<string, number>; masterActive: boolean; enabledProducts: Record<string, boolean>; generatedAt: string }
 
   const money = (price: number) => `MX$${price.toLocaleString("es-MX", { maximumFractionDigits: 2 })}`
   const escapeHtml = (value: string) => value.replace(/[&<>"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]!)
@@ -528,12 +507,6 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
   const isExplicitThirdParty = (point: Point) => {
     const sellers = [point.seller, point.shipper].filter(Boolean).join(" ")
     return sellers.length > 0 && !/amazon/i.test(sellers)
-  }
-
-  const renderInterval = (minutes: number) => {
-    intervalButtons.forEach((button) => {
-      button.classList.toggle("active", Number(button.dataset.minutes) === minutes)
-    })
   }
 
   const setControlStatus = (message: string) => {
@@ -642,7 +615,6 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     if (failedChecksElement) failedChecksElement.textContent = String(failedChecks)
     if (priceChangesElement) priceChangesElement.textContent = String(changes)
     if (dashboardMeta) dashboardMeta.textContent = `${new Set(payload.points.map((point) => point.asin)).size} productos · ${payload.points.length} registros`
-    renderInterval(payload.checkIntervalMinutes)
     if (masterControls) {
       masterControls.innerHTML = `<button class="product-toggle master-control ${payload.masterActive ? "active" : ""}" data-master-toggle>${payload.masterActive ? "Pausar todo" : "Reanudar todo"}</button>`
       masterControls.querySelector<HTMLButtonElement>("[data-master-toggle]")?.addEventListener("click", () => void updateControl("/master", !payload.masterActive))
@@ -686,9 +658,12 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
           return `<span class="flow-item ${!available ? "no-stock" : thirdParty ? "reseller" : target ? "target" : ""}" data-reading-at="${point.scrapedAt}">${content}<small>${new Date(point.scrapedAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</small></span>`
         }).join("") || `<span class="empty-reading">Todavía no hay revisiones guardadas</span>`
         const color = palette[index % palette.length]!
-        return `<section class="product-section" data-product-section="${product.asin}"><article class="product-control-card"><img class="product-image" src="/products/item${index + 1}.jpg" alt="Producto ${escapeHtml(product.asin)}"><div class="product-copy"><strong>${escapeHtml(product.asin)}</strong><span class="stock-status ${currentThirdParty ? "reseller" : currentAvailable ? "available" : "unavailable"}">${currentStatus}</span><small>Precio actual: <b>${currentLabel}</b></small><small>Precio máximo: ${money(product.targetPrice)}</small><small>Última revisión: ${stat?.lastCheckedAt ? escapeHtml(new Date(stat.lastCheckedAt).toLocaleString("es-MX")) : "Sin datos"}</small>${stat?.lastError ? `<small class="error">Error: ${escapeHtml(stat.lastError)}</small>` : ""}</div><button class="product-toggle ${active ? "active" : ""}" data-product-toggle="${product.asin}">${active ? "Activo" : "Pausado"}</button></article><section class="price-flow" aria-label="Últimas lecturas de ${product.asin}"><div class="flow-head"><h2>Últimas lecturas</h2><span>${escapeHtml(product.asin)}</span></div><div class="flow-track">${readings}</div></section><section class="chart-box">${buildProductChart(product.asin, points, color)}</section></section>`
+        const interval = payload.productIntervals[product.asin] ?? 5
+        const intervalOptions = [1, 5, 10, 30, 60].map((minutes) => `<option value="${minutes}" ${minutes === interval ? "selected" : ""}>${minutes} min</option>`).join("")
+        return `<section class="product-section" data-product-section="${product.asin}"><article class="product-control-card"><img class="product-image" src="/products/item${index + 1}.jpg" alt="Producto ${escapeHtml(product.asin)}"><div class="product-copy"><strong>${escapeHtml(product.asin)}</strong><span class="stock-status ${currentThirdParty ? "reseller" : currentAvailable ? "available" : "unavailable"}">${currentStatus}</span><small>Precio actual: <b>${currentLabel}</b></small><small>Precio máximo: ${money(product.targetPrice)}</small><small>Última revisión: ${stat?.lastCheckedAt ? escapeHtml(new Date(stat.lastCheckedAt).toLocaleString("es-MX")) : "Sin datos"}</small>${stat?.lastError ? `<small class="error">Error: ${escapeHtml(stat.lastError)}</small>` : ""}</div><div class="product-actions"><label class="product-interval">Revisar cada<select data-product-interval="${product.asin}">${intervalOptions}</select></label><button class="product-toggle ${active ? "active" : ""}" data-product-toggle="${product.asin}">${active ? "Activo" : "Pausado"}</button></div></article><section class="price-flow" aria-label="Últimas lecturas de ${product.asin}"><div class="flow-head"><h2>Últimas lecturas</h2><span>${escapeHtml(product.asin)}</span></div><div class="flow-track">${readings}</div></section><section class="chart-box">${buildProductChart(product.asin, points, color)}</section></section>`
       }).join("")
       productsDashboard.querySelectorAll<HTMLButtonElement>("[data-product-toggle]").forEach((button) => button.addEventListener("click", () => void updateControl(`/products/${button.dataset.productToggle}`, payload.enabledProducts[button.dataset.productToggle!] === false)))
+      productsDashboard.querySelectorAll<HTMLSelectElement>("[data-product-interval]").forEach((select) => select.addEventListener("change", () => void updateProductInterval(select)))
       productsDashboard.querySelectorAll<HTMLElement>("[data-product-section]").forEach((section) => {
         const asin = section.dataset.productSection!
         const track = section.querySelector<HTMLElement>(".flow-track")
@@ -739,6 +714,23 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     } catch { setControlStatus("No se pudo conectar con el monitor") }
   }
 
+  const updateProductInterval = async (select: HTMLSelectElement) => {
+    select.disabled = true
+    try {
+      const response = await fetch(`${controlUrl}/products/${select.dataset.productInterval}/interval`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ checkIntervalMinutes: Number(select.value) }),
+      })
+      if (!response.ok) throw new Error("No se pudo actualizar")
+      await refreshDashboard()
+    } catch {
+      setControlStatus("No se pudo conectar con el monitor")
+    } finally {
+      select.disabled = false
+    }
+  }
+
   const refreshDashboard = async () => {
     try {
       const response = await fetch(`${controlUrl}/dashboard`, { cache: "no-store" })
@@ -748,26 +740,6 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
       setControlStatus("Monitor apagado · mostrando el último dato")
     }
   }
-
-  intervalButtons.forEach((button) => {
-    button.addEventListener("click", async () => {
-      const minutes = Number(button.dataset.minutes)
-      intervalButtons.forEach((item) => { item.disabled = true })
-      try {
-        const response = await fetch(`${controlUrl}/interval`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ checkIntervalMinutes: minutes }),
-        })
-        if (!response.ok) throw new Error("No se pudo actualizar")
-        await refreshDashboard()
-      } catch {
-        setControlStatus("No se pudo conectar con el monitor")
-      } finally {
-        intervalButtons.forEach((item) => { item.disabled = false })
-      }
-    })
-  })
 
   void refreshDashboard()
   window.setInterval(() => { void refreshDashboard() }, dashboardRefreshMs)

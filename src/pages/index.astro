@@ -342,6 +342,30 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
   :global(.flow-item.reseller) { background: #2a2112; border-color: #92400e; color: #fde68a; }
   :global(.empty-reading) { color: #71717a; font-size: 0.8rem; padding: 0.8rem; }
 
+  :global(.flow-item.new-reading) {
+    animation: reading-arrives 700ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    transform-origin: right center;
+  }
+
+  @keyframes reading-arrives {
+    0% {
+      opacity: 0;
+      transform: perspective(600px) translateX(32px) rotateY(-28deg) scale(0.9);
+    }
+    65% {
+      opacity: 1;
+      transform: perspective(600px) translateX(-4px) rotateY(4deg) scale(1.02);
+    }
+    100% {
+      opacity: 1;
+      transform: perspective(600px) translateX(0) rotateY(0) scale(1);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :global(.flow-item.new-reading) { animation: none; }
+  }
+
   /* --- Chart --- */
   :global(.chart-box) {
     background: #18181b;
@@ -469,6 +493,7 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
   const plotRight = 16
   const plotTop = 16
   const plotBottom = 44
+  const latestReadingByAsin = new Map<string, string>()
 
   type Point = { asin: string; price: number | null; currency: string; availability: string | null; seller?: string | null; shipper?: string | null; isAvailable?: boolean; hasPurchaseSignal?: boolean; scrapedAt: string }
   type Stats = { asin: string; totalChecks: number; successfulChecks: number; failedChecks: number; priceChanges: number; lastCheckedAt: string | null; lastPrice: number | null; lastError: string | null }
@@ -573,7 +598,7 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
       return `<circle cx="${x(new Date(point.scrapedAt).getTime())}" cy="${y(point.price)}" r="${thirdParty ? 5 : 3}" fill="${thirdParty ? "#f59e0b" : color}" class="point" data-tooltip="${escapeHtml(`${thirdParty ? "Revendedor · " : ""}${money(point.price)} · ${new Date(point.scrapedAt).toLocaleString("es-MX")}`)}"/>`
     }).join("")
     const noStockDots = events.filter((point) => !isPurchasable(point)).map((point) => `<circle cx="${x(new Date(point.scrapedAt).getTime())}" cy="${plotTop + plotHeight}" r="5" fill="#ef4444" class="point no-stock-point" data-tooltip="${escapeHtml(`Sin stock · ${new Date(point.scrapedAt).toLocaleString("es-MX")}`)}"/>`).join("")
-    return `<div class="chart-head"><h2>Evolución de precio · últimas 24 horas</h2><span class="legend-item"><span class="dot" style="background:${color}"></span>${escapeHtml(asin)} · <i class="reseller-dot"></i> Revendedor · <i class="stock-dot"></i> Sin stock</span></div><div class="chart"><svg viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="Gráfica de ${escapeHtml(asin)}">${grids}${labels}${path ? `<path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>` : ""}${priceDots}${noStockDots}</svg><div class="tooltip"></div></div>`
+    return `<div class="chart-head"><h2>Evolución de precio · últimas 24 horas</h2><span class="legend-item"><span class="dot" style="background:${color}"></span>${escapeHtml(asin)} · 💀 Revendedor · <i class="stock-dot"></i> Sin stock</span></div><div class="chart"><svg viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="Gráfica de ${escapeHtml(asin)}">${grids}${labels}${path ? `<path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>` : ""}${priceDots}${noStockDots}</svg><div class="tooltip"></div></div>`
   }
 
   const renderDashboard = (payload: DashboardPayload) => {
@@ -600,9 +625,9 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
         const latestPoint = points.at(-1)
         const currentAvailable = stat?.lastPrice !== null && latestPoint ? isPurchasable(latestPoint) : false
         const currentThirdParty = currentAvailable && latestPoint ? isExplicitThirdParty(latestPoint) : false
-        const currentStatus = currentThirdParty ? "Sólo revendedor" : currentAvailable ? "Disponible" : "Sin stock"
+        const currentStatus = currentThirdParty ? "💀 Sólo revendedor" : currentAvailable ? "Disponible" : "Sin stock"
         const currentLabel = currentAvailable && stat?.lastPrice != null ? money(stat.lastPrice) : "Sin stock"
-        const recent = points.slice(-60)
+        const recent = points.slice(-60).sort((a, b) => a.scrapedAt.localeCompare(b.scrapedAt))
         if (stat?.lastCheckedAt && (!latestPoint || stat.lastCheckedAt > latestPoint.scrapedAt)) {
           recent.push({ asin: product.asin, price: stat.lastPrice, currency: "MXN", availability: stat.lastPrice === null ? "Sin stock" : null, isAvailable: stat.lastPrice !== null, hasPurchaseSignal: stat.lastPrice !== null, scrapedAt: stat.lastCheckedAt })
         }
@@ -613,14 +638,26 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
           const content = !available
             ? `<b>⛔ Sin stock</b>`
             : thirdParty
-              ? `<b title="Oferta de revendedor">🟠 ${money(point.price)}</b>`
+              ? `<b title="Oferta de revendedor">💀 ${money(point.price)}</b>`
               : `<b>${target ? "👑" : "💀"} ${money(point.price)}</b>`
-          return `<span class="flow-item ${!available ? "no-stock" : thirdParty ? "reseller" : target ? "target" : ""}">${content}<small>${new Date(point.scrapedAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</small></span>`
+          return `<span class="flow-item ${!available ? "no-stock" : thirdParty ? "reseller" : target ? "target" : ""}" data-reading-at="${point.scrapedAt}">${content}<small>${new Date(point.scrapedAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</small></span>`
         }).join("") || `<span class="empty-reading">Todavía no hay revisiones guardadas</span>`
         const color = palette[index % palette.length]!
         return `<section class="product-section" data-product-section="${product.asin}"><article class="product-control-card"><img class="product-image" src="/products/item${index + 1}.jpg" alt="Producto ${escapeHtml(product.asin)}"><div class="product-copy"><strong>${escapeHtml(product.asin)}</strong><span class="stock-status ${currentThirdParty ? "reseller" : currentAvailable ? "available" : "unavailable"}">${currentStatus}</span><small>Precio actual: <b>${currentLabel}</b></small><small>Precio máximo: ${money(product.targetPrice)}</small><small>Última revisión: ${stat?.lastCheckedAt ? escapeHtml(new Date(stat.lastCheckedAt).toLocaleString("es-MX")) : "Sin datos"}</small>${stat?.lastError ? `<small class="error">Error: ${escapeHtml(stat.lastError)}</small>` : ""}</div><button class="product-toggle ${active ? "active" : ""}" data-product-toggle="${product.asin}">${active ? "Activo" : "Pausado"}</button></article><section class="price-flow" aria-label="Últimas lecturas de ${product.asin}"><div class="flow-head"><h2>Últimas lecturas</h2><span>${escapeHtml(product.asin)}</span></div><div class="flow-track">${readings}</div></section><section class="chart-box">${buildProductChart(product.asin, points, color)}</section></section>`
       }).join("")
       productsDashboard.querySelectorAll<HTMLButtonElement>("[data-product-toggle]").forEach((button) => button.addEventListener("click", () => void updateControl(`/products/${button.dataset.productToggle}`, payload.enabledProducts[button.dataset.productToggle!] === false)))
+      productsDashboard.querySelectorAll<HTMLElement>("[data-product-section]").forEach((section) => {
+        const asin = section.dataset.productSection!
+        const track = section.querySelector<HTMLElement>(".flow-track")
+        const readings = track?.querySelectorAll<HTMLElement>("[data-reading-at]") ?? []
+        const newest = readings.item(readings.length - 1)
+        const newestAt = newest?.dataset.readingAt
+        const previousAt = latestReadingByAsin.get(asin)
+        const hasNewReading = Boolean(previousAt && newestAt && newestAt > previousAt)
+        if (newestAt) latestReadingByAsin.set(asin, newestAt)
+        if (hasNewReading) newest?.classList.add("new-reading")
+        requestAnimationFrame(() => track?.scrollTo({ left: track.scrollWidth, behavior: hasNewReading ? "smooth" : "auto" }))
+      })
       productsDashboard.querySelectorAll<SVGCircleElement>(".point").forEach((point) => {
         point.addEventListener("mouseenter", () => {
           const chart = point.closest<HTMLElement>(".chart")

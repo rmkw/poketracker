@@ -693,7 +693,8 @@ type Point = { asin: string; price: number; currency: string; availability: stri
       productControls.querySelectorAll<HTMLButtonElement>("[data-product-toggle]").forEach((button) => button.addEventListener("click", () => void updateControl(`/products/${button.dataset.productToggle}`, payload.enabledProducts[button.dataset.productToggle!] === false)))
     }
     renderChart(payload.points)
-    setControlStatus(`Monitor activo · actualizado ${new Date(payload.generatedAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`)
+    const state = payload.masterActive ? "Monitor activo" : "Monitor pausado"
+    setControlStatus(`${state} · actualizado ${new Date(payload.generatedAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`)
   }
 
   const updateControl = async (path: string, active: boolean) => {

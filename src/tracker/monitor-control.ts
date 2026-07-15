@@ -2,10 +2,12 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readMonitorSettings, writeMonitorSettings, type MonitorSettings } from "./monitor-settings.js"
 
 const allowedIntervals = new Set([1, 5])
+const allowedOrigins = new Set(["http://127.0.0.1:4321", "http://localhost:4321"])
 
-const sendJson = (response: ServerResponse, status: number, body: unknown): void => {
+const sendJson = (request: IncomingMessage, response: ServerResponse, status: number, body: unknown): void => {
+  const origin = request.headers.origin
   response.writeHead(status, {
-    "Access-Control-Allow-Origin": "http://127.0.0.1:4321",
+    ...(origin && allowedOrigins.has(origin) ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : {}),
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Content-Type": "application/json; charset=utf-8",
@@ -61,25 +63,25 @@ export const startMonitorControl = async ({
 
   const server = createServer(async (request, response) => {
     if (request.method === "OPTIONS") {
-      sendJson(response, 204, {})
+      sendJson(request, response, 204, {})
       return
     }
 
     if (request.method === "GET" && request.url === "/status") {
-      sendJson(response, 200, { ...settings, products })
+      sendJson(request, response, 200, { ...settings, products })
       return
     }
 
     if (request.method === "GET" && request.url === "/dashboard") {
       try {
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           ...(await getDashboardData()),
           ...settings,
           products,
           generatedAt: new Date().toISOString(),
         })
       } catch (error) {
-        sendJson(response, 500, {
+        sendJson(request, response, 500, {
           error: error instanceof Error ? error.message : "No se pudieron leer los datos del monitor",
         })
       }
@@ -91,9 +93,9 @@ export const startMonitorControl = async ({
         const payload = JSON.parse(await readBody(request)) as { checkIntervalMinutes?: unknown }
         const minutes = Number(payload.checkIntervalMinutes)
         await setCheckIntervalMinutes(minutes)
-        sendJson(response, 200, settings)
+        sendJson(request, response, 200, settings)
       } catch (error) {
-        sendJson(response, 400, { error: error instanceof Error ? error.message : "Solicitud invalida" })
+        sendJson(request, response, 400, { error: error instanceof Error ? error.message : "Solicitud invalida" })
       }
       return
     }
@@ -103,23 +105,23 @@ export const startMonitorControl = async ({
       settings = { ...settings, masterActive: Boolean(payload.active) }
       await writeMonitorSettings(settingsFile, settings)
       onIntervalChange(settings.checkIntervalMinutes)
-      sendJson(response, 200, settings)
+      sendJson(request, response, 200, settings)
       return
     }
 
     const productMatch = request.url?.match(/^\/products\/([A-Z0-9]{10})$/i)
     if (request.method === "POST" && productMatch) {
       const asin = productMatch[1]!.toUpperCase()
-      if (!products.some((product) => product.asin === asin)) { sendJson(response, 404, { error: "Producto no configurado" }); return }
+      if (!products.some((product) => product.asin === asin)) { sendJson(request, response, 404, { error: "Producto no configurado" }); return }
       const payload = JSON.parse(await readBody(request)) as { active?: unknown }
       settings = { ...settings, enabledProducts: { ...settings.enabledProducts, [asin]: Boolean(payload.active) } }
       await writeMonitorSettings(settingsFile, settings)
       onIntervalChange(settings.checkIntervalMinutes)
-      sendJson(response, 200, settings)
+      sendJson(request, response, 200, settings)
       return
     }
 
-    sendJson(response, 404, { error: "No encontrado" })
+    sendJson(request, response, 404, { error: "No encontrado" })
   })
 
   await new Promise<void>((resolve, reject) => {

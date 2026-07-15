@@ -610,9 +610,10 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     const x = (point: Point) => plotLeft + ((eventIndex.get(point) ?? 0) / Math.max(events.length - 1, 1)) * plotWidth
     const y = (price: number) => plotTop + ((yMax - price) / (yMax - yMin)) * plotHeight
     const ticks = Array.from({ length: 5 }, (_, index) => yMax - (index / 4) * (yMax - yMin))
-    const timeTicks = Array.from({ length: Math.min(5, Math.max(events.length, 1)) }, (_, index, entries) => {
-      if (events.length === 0) return { x: plotLeft + (index / Math.max(entries.length - 1, 1)) * plotWidth, time: now }
-      const eventPosition = Math.round((index / Math.max(entries.length - 1, 1)) * (events.length - 1))
+    const timeTickCount = Math.min(5, Math.max(events.length, 1))
+    const timeTicks = Array.from({ length: timeTickCount }, (_, index) => {
+      if (events.length === 0) return { x: plotLeft + (index / Math.max(timeTickCount - 1, 1)) * plotWidth, time: now }
+      const eventPosition = Math.round((index / Math.max(timeTickCount - 1, 1)) * (events.length - 1))
       const point = events[eventPosition]!
       return { x: x(point), time: new Date(point.scrapedAt).getTime() }
     })

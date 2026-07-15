@@ -50,7 +50,7 @@ for (const point of allPoints) {
 }
 
 products = [...grouped.entries()].map(([asin, points]) => {
-  const prices = points.map((point) => point.price)
+  const prices = points.flatMap((point) => point.price === null ? [] : [point.price])
   const latest = points.at(-1)!
   const previous = points.at(-2) ?? null
   return {
@@ -60,8 +60,8 @@ products = [...grouped.entries()].map(([asin, points]) => {
     currency: latest.currency,
     latestPrice: latest.price,
     previousPrice: previous?.price ?? null,
-    minPrice: Math.min(...prices),
-    maxPrice: Math.max(...prices),
+    minPrice: prices.length > 0 ? Math.min(...prices) : 0,
+    maxPrice: prices.length > 0 ? Math.max(...prices) : 0,
     availability: latest.availability,
     rating: null,
     snapshots: points.length,
@@ -69,8 +69,6 @@ products = [...grouped.entries()].map(([asin, points]) => {
   }
 })
 
-// --- Chart data ---
-const trackedAsins = products.map((p) => p.asin)
 const groupedByAsin = new Map<string, DashboardPoint[]>()
 for (const point of allPoints) {
   const list = groupedByAsin.get(point.asin) ?? []
@@ -88,64 +86,9 @@ const historicalPriceChanges = [...groupedByAsin.values()].reduce(
   0,
 )
 
-const chartWindowStart = Date.now() - 24 * 60 * 60 * 1_000
-const recentPoints = allPoints.filter((point) => new Date(point.scrapedAt).getTime() >= chartWindowStart)
-const chartPoints = recentPoints
-const chartGroupedByAsin = new Map<string, DashboardPoint[]>()
-for (const point of chartPoints) {
-  const list = chartGroupedByAsin.get(point.asin) ?? []
-  list.push(point)
-  chartGroupedByAsin.set(point.asin, list)
-}
-
-const palette = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"]
-const colorMap = new Map(trackedAsins.map((asin, i) => [asin, palette[i % palette.length]]))
-
-const allPrices = chartPoints.map((p) => p.price)
-const minPrice = allPrices.length > 0 ? Math.min(...allPrices) : 0
-const maxPrice = allPrices.length > 0 ? Math.max(...allPrices) : 0
-const margin = (maxPrice - minPrice) * 0.1 || 1
-const yMin = minPrice - margin
-const yMax = maxPrice + margin
-
-const allDates = chartPoints.map((p) => new Date(p.scrapedAt).getTime())
-const minDate = chartWindowStart
-const maxDate = Date.now()
-
-const W = 900
-const H = 340
-const PL = 58
-const PR = 16
-const PT = 16
-const PB = 44
-const PW = W - PL - PR
-const PH = H - PT - PB
-
-const x = (ts: number) => maxDate === minDate ? PL + PW / 2 : PL + ((ts - minDate) / (maxDate - minDate)) * PW
-const y = (p: number) => yMax === yMin ? PT + PH / 2 : PT + ((yMax - p) / (yMax - yMin)) * PH
-
-const yTicks = Array.from({ length: 5 }, (_, i) => yMax - (i / 4) * (yMax - yMin))
-
 const uniqueDays = [...new Set(allPoints.map((p) => p.scrapedAt.slice(0, 10)))]
-const xTickCount = 5
-const xStep = (maxDate - minDate) / (xTickCount - 1)
-const xTicks = Array.from({ length: xTickCount }, (_, i) => {
-  const ts = minDate + i * xStep
-  return { x: x(ts), label: new Date(ts).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }) }
-})
-
-const series = trackedAsins.map((asin) => {
-  const pts = chartGroupedByAsin.get(asin) ?? []
-  const d = pts
-    .map((p, i) => `${i === 0 ? "M" : "L"}${x(new Date(p.scrapedAt).getTime()).toFixed(1)} ${y(p.price).toFixed(1)}`)
-    .join(" ")
-  return { asin, pts, d, color: colorMap.get(asin)! }
-})
 
 const fmt = (n: number) => `MX$${n.toFixed(2)}`
-const fmtDate = (s: string) => new Date(s).toLocaleString("es-MX", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
-const delta = (a: number | null, b: number | null) =>
-  a != null && b != null && b !== 0 ? ((a - b) / b) * 100 : null
 const totalChecks = monitorStats.reduce((total, stats) => total + stats.totalChecks, 0)
 const successfulChecks = monitorStats.reduce((total, stats) => total + stats.successfulChecks, 0)
 const failedChecks = monitorStats.reduce((total, stats) => total + stats.failedChecks, 0)
@@ -170,18 +113,6 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
         <article><span>Exitosas</span><strong data-successful-checks>{successfulChecks}</strong></article>
         <article><span>Cambios de precio</span><strong data-price-changes>{observedPriceChanges}</strong></article>
         <article><span>Errores</span><strong data-failed-checks>{failedChecks}</strong></article>
-        <div data-monitor-details>
-        {monitorStats.map((stats) => (
-          <div class="monitor-detail">
-            <strong>{stats.asin}</strong>
-            <span>Última revisión</span>
-            <b>{stats.lastCheckedAt ? new Date(stats.lastCheckedAt).toLocaleString("es-MX") : "Sin datos"}</b>
-            <span>Precio detectado</span>
-            <b>{stats.lastPrice != null ? fmt(stats.lastPrice) : "Sin datos"}</b>
-            {stats.lastError && <small>Error: {stats.lastError}</small>}
-          </div>
-        ))}
-        </div>
       </section>
     )}
 
@@ -194,76 +125,12 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
       <span class="control-status" data-control-status>Conectando con el monitor...</span>
     </section>
 
-    <section class="product-controls" aria-label="Productos vigilados" data-product-controls></section>
+    <section class="master-controls" aria-label="Control general" data-master-controls></section>
 
     {chartError ? (
       <div class="notice">{chartError}</div>
     ) : (
-      <>
-        <section class="price-flow" aria-label="Últimas lecturas de precio">
-          <div class="flow-head">
-            <h2>Últimas lecturas</h2>
-            <span>Se agrega una nueva revisión cada minuto</span>
-          </div>
-          <div class="flow-track" data-price-flow>
-            {allPoints.slice(-60).map((point) => (
-              <span class:list={["flow-item", point.price <= 1_300 && "target"]}>
-                <b>{point.price <= 1_300 ? "👑" : "💀"} {fmt(point.price)}</b>
-                <small>{new Date(point.scrapedAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</small>
-              </span>
-            ))}
-          </div>
-        </section>
-
-        <section class="chart-box">
-          <div class="chart-head">
-            <h2 data-chart-title>Evolucion de precios · ultimas 24 horas</h2>
-            <div class="legend" data-chart-legend>
-              {series.map((s) => (
-                <span class="legend-item">
-                  <span class="dot" style={`background:${s.color}`} />
-                  {s.asin}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          <div class="chart" id="chart-container">
-            <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Grafico de precios">
-              {yTicks.map((v) => (
-                <g>
-                  <line x1={PL} y1={y(v)} x2={W - PR} y2={y(v)} class="grid" />
-                  <text x={PL - 8} y={y(v) + 4} class="label" text-anchor="end">MX${v.toFixed(0)}</text>
-                </g>
-              ))}
-
-              {xTicks.map((t) => (
-                <text x={t.x} y={H - PB + 20} class="label" text-anchor="middle">{t.label}</text>
-              ))}
-
-              {series.map((s) => (
-                <path d={s.d} fill="none" stroke={s.color} stroke-width="2" stroke-linejoin="round" />
-              ))}
-
-              {series.map((s) =>
-                s.pts.map((pt) => (
-                  <circle
-                    cx={x(new Date(pt.scrapedAt).getTime())}
-                    cy={y(pt.price)}
-                    r="3"
-                    fill={s.color}
-                    class="point"
-                    data-price={pt.price.toFixed(2)}
-                    data-date={fmtDate(pt.scrapedAt)}
-                    data-color={s.color}
-                  />
-                ))
-              )}
-            </svg>
-            <div class="tooltip" id="chart-tooltip"></div>
-          </div>
-        </section>
-      </>
+      <div class="products-dashboard" data-products-dashboard></div>
     )}
   </main>
 </Layout>
@@ -349,12 +216,20 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     margin: -0.75rem 0 1.5rem;
   }
 
-  .product-controls { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-bottom: 1.5rem; }
-  :global(.product-control-card) { background: #18181b; border: 1px solid #3f3f46; border-radius: 8px; display: grid; gap: 0.45rem; grid-template-columns: 56px 1fr auto; padding: 0.75rem; }
-  :global(.product-image) { align-items: center; background: #27272a; border-radius: 6px; color: #facc15; display: flex; font-size: 1.5rem; height: 56px; justify-content: center; overflow: hidden; width: 56px; }
-  :global(.product-image img) { height: 100%; object-fit: cover; width: 100%; }
+  .master-controls { margin-bottom: 1.5rem; }
+  .products-dashboard { display: grid; gap: 2.5rem; }
+  :global(.product-section) { display: grid; gap: 1rem; }
+  :global(.product-control-card) { align-items: stretch; background: #18181b; border: 1px solid #3f3f46; border-radius: 10px; display: grid; gap: 1rem; grid-template-columns: 140px 1fr auto; min-height: 150px; overflow: hidden; padding: 0.9rem; }
+  :global(.product-image) { background: #fff; border-radius: 7px; height: 132px; object-fit: contain; width: 140px; }
+  :global(.product-copy) { align-content: center; display: grid; gap: 0.3rem; }
   :global(.product-control-card strong) { color: #fafafa; font-family: ui-monospace, monospace; }
-  :global(.product-control-card small) { color: #a1a1aa; }
+  :global(.product-control-card small) { color: #a1a1aa; display: block; }
+  :global(.product-control-card small b) { color: #fafafa; }
+  :global(.product-control-card small.error) { color: #fca5a5; }
+  :global(.stock-status) { font-size: 0.78rem; font-weight: 700; width: max-content; }
+  :global(.stock-status.available) { color: #86efac; }
+  :global(.stock-status.unavailable) { color: #fca5a5; }
+  :global(.stock-status.reseller) { color: #fbbf24; }
   :global(.product-toggle) { align-self: center; background: #27272a; border: 1px solid #52525b; color: #e4e4e7; cursor: pointer; padding: 0.4rem 0.55rem; }
   :global(.product-toggle.active) { border-color: #16a34a; color: #86efac; }
   :global(.master-control) { grid-column: 1 / -1; }
@@ -463,6 +338,9 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
   :global(.flow-item b) { font-size: 0.9rem; }
   :global(.flow-item small) { color: #d4d4d8; font-size: 0.72rem; }
   :global(.flow-item.target) { background: #2a2312; border-color: #a16207; color: #fef3c7; }
+  :global(.flow-item.no-stock) { background: #2a1517; border-color: #7f1d1d; color: #fecaca; }
+  :global(.flow-item.reseller) { background: #2a2112; border-color: #92400e; color: #fde68a; }
+  :global(.empty-reading) { color: #71717a; font-size: 0.8rem; padding: 0.8rem; }
 
   /* --- Chart --- */
   .chart-box {
@@ -534,6 +412,10 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     r: 5;
   }
 
+  :global(.no-stock-point) { stroke: #fecaca; stroke-width: 2; }
+  :global(.stock-dot) { background: #ef4444; border-radius: 50%; display: inline-block; height: 8px; width: 8px; }
+  :global(.reseller-dot) { background: #f59e0b; border-radius: 50%; display: inline-block; height: 8px; width: 8px; }
+
   :global(.tooltip) {
     position: absolute;
     pointer-events: none;
@@ -559,6 +441,9 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     .chart-head { flex-direction: column; align-items: flex-start; }
     .monitor-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .flow-head { align-items: flex-start; flex-direction: column; }
+    :global(.product-control-card) { grid-template-columns: 92px 1fr; }
+    :global(.product-image) { height: 92px; width: 92px; }
+    :global(.product-toggle) { grid-column: 1 / -1; width: 100%; }
   }
 </style>
 
@@ -566,17 +451,16 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
   const monitorControl = document.querySelector<HTMLElement>("[data-monitor-control]")
   const controlStatus = document.querySelector<HTMLElement>("[data-control-status]")
   const intervalButtons = monitorControl?.querySelectorAll<HTMLButtonElement>("button[data-minutes]") ?? []
+  const masterControls = document.querySelector<HTMLElement>("[data-master-controls]")
+  const productsDashboard = document.querySelector<HTMLElement>("[data-products-dashboard]")
   const chartContainer = document.getElementById("chart-container")
   const chartLegend = document.querySelector<HTMLElement>("[data-chart-legend]")
   const chartTitle = document.querySelector<HTMLElement>("[data-chart-title]")
-  const priceFlow = document.querySelector<HTMLElement>("[data-price-flow]")
-  const monitorDetails = document.querySelector<HTMLElement>("[data-monitor-details]")
   const dashboardMeta = document.querySelector<HTMLElement>("[data-dashboard-meta]")
   const totalChecksElement = document.querySelector<HTMLElement>("[data-total-checks]")
   const successfulChecksElement = document.querySelector<HTMLElement>("[data-successful-checks]")
   const failedChecksElement = document.querySelector<HTMLElement>("[data-failed-checks]")
   const priceChangesElement = document.querySelector<HTMLElement>("[data-price-changes]")
-  const productControls = document.querySelector<HTMLElement>("[data-product-controls]")
   const controlUrl = "http://127.0.0.1:3784"
   const palette = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"]
   const chartWidth = 900
@@ -586,17 +470,22 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
   const plotTop = 16
   const plotBottom = 44
 
-type Point = { asin: string; price: number; currency: string; availability: string | null; seller?: string | null; shipper?: string | null; isAvailable?: boolean; hasPurchaseSignal?: boolean; scrapedAt: string }
+  type Point = { asin: string; price: number | null; currency: string; availability: string | null; seller?: string | null; shipper?: string | null; isAvailable?: boolean; hasPurchaseSignal?: boolean; scrapedAt: string }
   type Stats = { asin: string; totalChecks: number; successfulChecks: number; failedChecks: number; priceChanges: number; lastCheckedAt: string | null; lastPrice: number | null; lastError: string | null }
   type Product = { asin: string; targetPrice: number }
   type DashboardPayload = { points: Point[]; stats: Stats[]; products: Product[]; checkIntervalMinutes: number; masterActive: boolean; enabledProducts: Record<string, boolean>; generatedAt: string }
 
   const money = (price: number) => `MX$${price.toLocaleString("es-MX", { maximumFractionDigits: 2 })}`
   const escapeHtml = (value: string) => value.replace(/[&<>"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]!)
-  const isPurchasable = (point: Point) =>
+  const isPurchasable = (point: Point): point is Point & { price: number } =>
+    point.price !== null &&
     point.isAvailable !== false &&
     point.hasPurchaseSignal !== false &&
     !(point.isAvailable === undefined && point.hasPurchaseSignal === undefined && point.availability === null && point.seller == null && point.shipper == null)
+  const isExplicitThirdParty = (point: Point) => {
+    const sellers = [point.seller, point.shipper].filter(Boolean).join(" ")
+    return sellers.length > 0 && !/amazon/i.test(sellers)
+  }
 
   const renderInterval = (minutes: number) => {
     intervalButtons.forEach((button) => {
@@ -659,6 +548,34 @@ type Point = { asin: string; price: number; currency: string; availability: stri
     })
   }
 
+  const buildProductChart = (asin: string, points: Point[], color: string) => {
+    const now = Date.now()
+    const start = now - 24 * 60 * 60 * 1_000
+    const events = points.filter((point) => new Date(point.scrapedAt).getTime() >= start)
+    const priced = events.filter((point): point is Point & { price: number } => point.price !== null)
+    const prices = priced.map((point) => point.price)
+    const minPrice = prices.length > 0 ? Math.min(...prices) : 0
+    const maxPrice = prices.length > 0 ? Math.max(...prices) : 1
+    const padding = Math.max((maxPrice - minPrice) * 0.1, 1)
+    const yMin = minPrice - padding
+    const yMax = maxPrice + padding
+    const plotWidth = chartWidth - plotLeft - plotRight
+    const plotHeight = chartHeight - plotTop - plotBottom
+    const x = (time: number) => plotLeft + ((time - start) / (now - start)) * plotWidth
+    const y = (price: number) => plotTop + ((yMax - price) / (yMax - yMin)) * plotHeight
+    const ticks = Array.from({ length: 5 }, (_, index) => yMax - (index / 4) * (yMax - yMin))
+    const timeTicks = Array.from({ length: 5 }, (_, index) => start + (index / 4) * (now - start))
+    const grids = ticks.map((value) => `<g><line x1="${plotLeft}" y1="${y(value)}" x2="${chartWidth - plotRight}" y2="${y(value)}" class="grid"/><text x="${plotLeft - 8}" y="${y(value) + 4}" class="label" text-anchor="end">MX$${value.toFixed(0)}</text></g>`).join("")
+    const labels = timeTicks.map((time) => `<text x="${x(time)}" y="${chartHeight - plotBottom + 20}" class="label" text-anchor="middle">${new Date(time).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</text>`).join("")
+    const path = priced.map((point, index) => `${index === 0 ? "M" : "L"}${x(new Date(point.scrapedAt).getTime()).toFixed(1)} ${y(point.price).toFixed(1)}`).join(" ")
+    const priceDots = priced.map((point) => {
+      const thirdParty = isExplicitThirdParty(point)
+      return `<circle cx="${x(new Date(point.scrapedAt).getTime())}" cy="${y(point.price)}" r="${thirdParty ? 5 : 3}" fill="${thirdParty ? "#f59e0b" : color}" class="point" data-tooltip="${escapeHtml(`${thirdParty ? "Revendedor · " : ""}${money(point.price)} · ${new Date(point.scrapedAt).toLocaleString("es-MX")}`)}"/>`
+    }).join("")
+    const noStockDots = events.filter((point) => !isPurchasable(point)).map((point) => `<circle cx="${x(new Date(point.scrapedAt).getTime())}" cy="${plotTop + plotHeight}" r="5" fill="#ef4444" class="point no-stock-point" data-tooltip="${escapeHtml(`Sin stock · ${new Date(point.scrapedAt).toLocaleString("es-MX")}`)}"/>`).join("")
+    return `<div class="chart-head"><h2>Evolución de precio · últimas 24 horas</h2><span class="legend-item"><span class="dot" style="background:${color}"></span>${escapeHtml(asin)} · <i class="reseller-dot"></i> Revendedor · <i class="stock-dot"></i> Sin stock</span></div><div class="chart"><svg viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="Gráfica de ${escapeHtml(asin)}">${grids}${labels}${path ? `<path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>` : ""}${priceDots}${noStockDots}</svg><div class="tooltip"></div></div>`
+  }
+
   const renderDashboard = (payload: DashboardPayload) => {
     const stats = payload.stats
     const totalChecks = stats.reduce((total, entry) => total + entry.totalChecks, 0)
@@ -670,29 +587,50 @@ type Point = { asin: string; price: number; currency: string; availability: stri
     if (failedChecksElement) failedChecksElement.textContent = String(failedChecks)
     if (priceChangesElement) priceChangesElement.textContent = String(changes)
     if (dashboardMeta) dashboardMeta.textContent = `${new Set(payload.points.map((point) => point.asin)).size} productos · ${payload.points.length} registros`
-    if (monitorDetails) monitorDetails.innerHTML = stats.map((entry) => `<div class="monitor-detail"><strong>${escapeHtml(entry.asin)}</strong><span>Última revisión</span><b>${entry.lastCheckedAt ? escapeHtml(new Date(entry.lastCheckedAt).toLocaleString("es-MX")) : "Sin datos"}</b><span>Precio detectado</span><b>${entry.lastPrice != null ? money(entry.lastPrice) : "Sin datos"}</b>${entry.lastError ? `<small>Error: ${escapeHtml(entry.lastError)}</small>` : ""}</div>`).join("")
-    if (priceFlow) {
-      priceFlow.innerHTML = payload.points
-        .filter(isPurchasable)
-        .slice(-60)
-        .map((point) => {
-        const target = point.price <= 1_300
-        return `<span class="flow-item ${target ? "target" : ""}"><b>${target ? "👑" : "💀"} ${money(point.price)}</b><small>${new Date(point.scrapedAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</small></span>`
-        }).join("")
-      priceFlow.scrollLeft = priceFlow.scrollWidth
-    }
     renderInterval(payload.checkIntervalMinutes)
-    if (productControls) {
-      const cards = payload.products.map((product) => {
+    if (masterControls) {
+      masterControls.innerHTML = `<button class="product-toggle master-control ${payload.masterActive ? "active" : ""}" data-master-toggle>${payload.masterActive ? "Pausar todo" : "Reanudar todo"}</button>`
+      masterControls.querySelector<HTMLButtonElement>("[data-master-toggle]")?.addEventListener("click", () => void updateControl("/master", !payload.masterActive))
+    }
+    if (productsDashboard) {
+      productsDashboard.innerHTML = payload.products.map((product, index) => {
         const stat = payload.stats.find((entry) => entry.asin === product.asin)
         const active = payload.masterActive && payload.enabledProducts[product.asin] !== false
-        return `<article class="product-control-card"><span class="product-image">📦</span><div><strong>${escapeHtml(product.asin)}</strong><small>Tope: ${money(product.targetPrice)} · ${stat?.lastPrice != null ? `Último: ${money(stat.lastPrice)}` : "Sin lectura"}</small></div><button class="product-toggle ${active ? "active" : ""}" data-product-toggle="${product.asin}">${active ? "Activo" : "Pausado"}</button></article>`
+        const points = payload.points.filter((point) => point.asin === product.asin)
+        const latestPoint = points.at(-1)
+        const currentAvailable = stat?.lastPrice !== null && latestPoint ? isPurchasable(latestPoint) : false
+        const currentThirdParty = currentAvailable && latestPoint ? isExplicitThirdParty(latestPoint) : false
+        const currentStatus = currentThirdParty ? "Sólo revendedor" : currentAvailable ? "Disponible" : "Sin stock"
+        const currentLabel = currentAvailable && stat?.lastPrice != null ? money(stat.lastPrice) : "Sin stock"
+        const recent = points.slice(-12)
+        if (stat?.lastCheckedAt && (!latestPoint || stat.lastCheckedAt > latestPoint.scrapedAt)) {
+          recent.push({ asin: product.asin, price: stat.lastPrice, currency: "MXN", availability: stat.lastPrice === null ? "Sin stock" : null, isAvailable: stat.lastPrice !== null, hasPurchaseSignal: stat.lastPrice !== null, scrapedAt: stat.lastCheckedAt })
+        }
+        const readings = recent.map((point) => {
+          const available = isPurchasable(point)
+          const thirdParty = available && isExplicitThirdParty(point)
+          const target = available && !thirdParty && point.price <= product.targetPrice
+          return `<span class="flow-item ${!available ? "no-stock" : thirdParty ? "reseller" : target ? "target" : ""}"><b>${!available ? "⛔ Sin stock" : thirdParty ? `🟠 Revendedor ${money(point.price)}` : `${target ? "👑" : "💀"} ${money(point.price)}`}</b><small>${new Date(point.scrapedAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</small></span>`
+        }).join("") || `<span class="empty-reading">Todavía no hay revisiones guardadas</span>`
+        const color = palette[index % palette.length]!
+        return `<section class="product-section" data-product-section="${product.asin}"><article class="product-control-card"><img class="product-image" src="/products/item${index + 1}.jpg" alt="Producto ${escapeHtml(product.asin)}"><div class="product-copy"><strong>${escapeHtml(product.asin)}</strong><span class="stock-status ${currentThirdParty ? "reseller" : currentAvailable ? "available" : "unavailable"}">${currentStatus}</span><small>Precio actual: <b>${currentLabel}</b></small><small>Precio máximo: ${money(product.targetPrice)}</small><small>Última revisión: ${stat?.lastCheckedAt ? escapeHtml(new Date(stat.lastCheckedAt).toLocaleString("es-MX")) : "Sin datos"}</small>${stat?.lastError ? `<small class="error">Error: ${escapeHtml(stat.lastError)}</small>` : ""}</div><button class="product-toggle ${active ? "active" : ""}" data-product-toggle="${product.asin}">${active ? "Activo" : "Pausado"}</button></article><section class="price-flow" aria-label="Últimas lecturas de ${product.asin}"><div class="flow-head"><h2>Últimas lecturas</h2><span>${escapeHtml(product.asin)}</span></div><div class="flow-track">${readings}</div></section><section class="chart-box">${buildProductChart(product.asin, points, color)}</section></section>`
       }).join("")
-      productControls.innerHTML = `<button class="product-toggle master-control ${payload.masterActive ? "active" : ""}" data-master-toggle>${payload.masterActive ? "Pausar todo" : "Reanudar todo"}</button>${cards}`
-      productControls.querySelector<HTMLButtonElement>("[data-master-toggle]")?.addEventListener("click", () => void updateControl("/master", !payload.masterActive))
-      productControls.querySelectorAll<HTMLButtonElement>("[data-product-toggle]").forEach((button) => button.addEventListener("click", () => void updateControl(`/products/${button.dataset.productToggle}`, payload.enabledProducts[button.dataset.productToggle!] === false)))
+      productsDashboard.querySelectorAll<HTMLButtonElement>("[data-product-toggle]").forEach((button) => button.addEventListener("click", () => void updateControl(`/products/${button.dataset.productToggle}`, payload.enabledProducts[button.dataset.productToggle!] === false)))
+      productsDashboard.querySelectorAll<SVGCircleElement>(".point").forEach((point) => {
+        point.addEventListener("mouseenter", () => {
+          const chart = point.closest<HTMLElement>(".chart")
+          const tooltip = chart?.querySelector<HTMLElement>(".tooltip")
+          const svg = chart?.querySelector("svg")
+          if (!chart || !tooltip || !svg) return
+          tooltip.textContent = point.dataset.tooltip ?? ""
+          tooltip.classList.add("visible")
+          const box = svg.getBoundingClientRect()
+          tooltip.style.left = `${(parseFloat(point.getAttribute("cx")!) / chartWidth) * box.width}px`
+          tooltip.style.top = `${(parseFloat(point.getAttribute("cy")!) / chartHeight) * box.height}px`
+        })
+        point.addEventListener("mouseleave", () => point.closest(".chart")?.querySelector(".tooltip")?.classList.remove("visible"))
+      })
     }
-    renderChart(payload.points)
     const state = payload.masterActive ? "Monitor activo" : "Monitor pausado"
     setControlStatus(`${state} · actualizado ${new Date(payload.generatedAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`)
   }

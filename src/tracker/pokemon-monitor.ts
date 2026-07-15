@@ -249,24 +249,21 @@ export const runCheck = async (
 ): Promise<CheckResult> => {
   const data = await scrapeAmazonMxProduct(asin)
   const state = await readAlertState(stateFileForAsin(config, asin))
-  const history =
-    data.price === null
-      ? { previousPrice: null, lowestPrice: null, recent: [] }
-      : await recordPriceObservation(
-          config.historyFile,
-          asin,
-          {
-            price: data.price,
-            currency: data.currency ?? "MXN",
-            seller: data.seller,
-            shipper: data.shipper,
-            availability: data.availability,
-            isAvailable: data.isAvailable,
-            hasPurchaseSignal: data.hasPurchaseSignal,
-            scrapedAt: data.scrapedAt,
-          },
-          config.historyLimit,
-        )
+  const history = await recordPriceObservation(
+    config.historyFile,
+    asin,
+    {
+      price: data.price,
+      currency: data.currency ?? "MXN",
+      seller: data.seller,
+      shipper: data.shipper,
+      availability: data.availability,
+      isAvailable: data.isAvailable,
+      hasPurchaseSignal: data.hasPurchaseSignal,
+      scrapedAt: data.scrapedAt,
+    },
+    config.historyLimit,
+  )
   const targetPrice = config.products.find((product) => product.asin === asin)?.targetPrice ?? DEFAULT_TARGET_PRICE
   const signature = buildSignature(data, targetPrice)
   const eligible = shouldAlert(data, targetPrice)

@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises"
 
 export type DashboardPoint = {
   asin: string
-  price: number
+  price: number | null
   currency: string
   availability: string | null
   seller?: string | null

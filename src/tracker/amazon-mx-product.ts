@@ -522,14 +522,25 @@ export const parseDecodoPricingProduct = (asin: string, payload: unknown): Amazo
   const shipper = normalizeParty(delivery?.replace(/^(?:envío|enviado)\s+por\s+/i, "") ?? null)
   const price = asPrice(preferred?.price)
   const url = asText(result.url) ?? `https://www.amazon.com.mx/dp/${asin}`
-  const available = Boolean(preferred && price !== null)
+  // Pricing lists can retain third-party offers after their buy box is gone.
+  // Treat them as unconfirmed until an HTML scrape verifies a purchase signal.
+  const available = Boolean(
+    preferred &&
+    price !== null &&
+    includesAmazonMx(seller) &&
+    includesAmazonMx(shipper),
+  )
 
   return {
     asin,
     title: asText(result.title),
     price,
     currency: asText(preferred?.currency) ?? "MXN",
-    availability: available ? "Oferta disponible" : "Sin artículos disponibles",
+    availability: available
+      ? "Oferta disponible"
+      : price !== null
+        ? "Oferta de tercero sin confirmar"
+        : "Sin artículos disponibles",
     seller,
     shipper,
     isAvailable: available,

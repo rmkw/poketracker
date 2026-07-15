@@ -22,3 +22,14 @@ test("marca no disponible una respuesta Pricing sin ofertas", () => {
   assert.equal(product?.isAvailable, false)
   assert.equal(product?.price, null)
 })
+
+test("no confirma una oferta de tercero sin señal de compra", () => {
+  const product = parseDecodoPricingProduct("B0H78BB9TY", {
+    results: [{ content: { results: { title: "ETB", pricing: [
+      { price: 5_165, currency: "MXN", seller: "Lion Collectibles MX", delivery: "Envío por Lion Collectibles MX" },
+    ] } } }],
+  })
+  assert.equal(product?.isAvailable, false)
+  assert.equal(product?.hasPurchaseSignal, false)
+  assert.equal(product?.availability, "Oferta de tercero sin confirmar")
+})

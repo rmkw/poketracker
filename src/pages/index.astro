@@ -315,9 +315,10 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
   .flow-head span { color: #a1a1aa; font-size: 0.72rem; }
 
   .flow-track {
-    display: grid;
+    display: flex;
     gap: 0.45rem;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    overflow-x: auto;
+    padding-bottom: 0.35rem;
     scrollbar-color: #52525b transparent;
   }
 
@@ -326,17 +327,16 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     background: #27272a;
     border: 1px solid #3f3f46;
     color: #d4d4d8;
-    display: flex;
+    display: inline-flex;
+    flex: 0 0 auto;
     flex-direction: column;
-    gap: 0.3rem;
-    min-width: 0;
-    padding: 0.6rem 0.45rem;
-    text-align: center;
+    gap: 0.45rem;
+    min-width: 9rem;
+    padding: 0.65rem 0.8rem;
   }
 
-  :global(.flow-item b) { font-size: 0.82rem; white-space: nowrap; }
+  :global(.flow-item b) { font-size: 0.9rem; }
   :global(.flow-item small) { color: #d4d4d8; font-size: 0.72rem; }
-  :global(.reading-badge) { color: #fbbf24; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
   :global(.flow-item.target) { background: #2a2312; border-color: #a16207; color: #fef3c7; }
   :global(.flow-item.no-stock) { background: #2a1517; border-color: #7f1d1d; color: #fecaca; }
   :global(.flow-item.reseller) { background: #2a2112; border-color: #92400e; color: #fde68a; }
@@ -444,7 +444,6 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
     :global(.product-control-card) { grid-template-columns: 92px 1fr; }
     :global(.product-image) { height: 92px; width: 92px; }
     :global(.product-toggle) { grid-column: 1 / -1; width: 100%; }
-    .flow-track { grid-auto-columns: minmax(7.5rem, 1fr); grid-auto-flow: column; grid-template-columns: none; overflow-x: auto; padding-bottom: 0.35rem; }
   }
 </style>
 
@@ -603,7 +602,7 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
         const currentThirdParty = currentAvailable && latestPoint ? isExplicitThirdParty(latestPoint) : false
         const currentStatus = currentThirdParty ? "Sólo revendedor" : currentAvailable ? "Disponible" : "Sin stock"
         const currentLabel = currentAvailable && stat?.lastPrice != null ? money(stat.lastPrice) : "Sin stock"
-        const recent = points.slice(-6)
+        const recent = points.slice(-60)
         if (stat?.lastCheckedAt && (!latestPoint || stat.lastCheckedAt > latestPoint.scrapedAt)) {
           recent.push({ asin: product.asin, price: stat.lastPrice, currency: "MXN", availability: stat.lastPrice === null ? "Sin stock" : null, isAvailable: stat.lastPrice !== null, hasPurchaseSignal: stat.lastPrice !== null, scrapedAt: stat.lastCheckedAt })
         }
@@ -614,7 +613,7 @@ const observedPriceChanges = Math.max(priceChanges, historicalPriceChanges)
           const content = !available
             ? `<b>⛔ Sin stock</b>`
             : thirdParty
-              ? `<span class="reading-badge">Revendedor</span><b>${money(point.price)}</b>`
+              ? `<b title="Oferta de revendedor">🟠 ${money(point.price)}</b>`
               : `<b>${target ? "👑" : "💀"} ${money(point.price)}</b>`
           return `<span class="flow-item ${!available ? "no-stock" : thirdParty ? "reseller" : target ? "target" : ""}">${content}<small>${new Date(point.scrapedAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</small></span>`
         }).join("") || `<span class="empty-reading">Todavía no hay revisiones guardadas</span>`

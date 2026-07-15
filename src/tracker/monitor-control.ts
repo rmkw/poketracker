@@ -29,6 +29,8 @@ export type MonitorControl = {
   masterActive: boolean
   isProductEnabled: (asin: string) => boolean
   setCheckIntervalMinutes: (minutes: number) => Promise<void>
+  setMasterActive: (active: boolean) => Promise<void>
+  setProductEnabled: (asin: string, active: boolean) => Promise<void>
   close: () => Promise<void>
 }
 
@@ -59,6 +61,20 @@ export const startMonitorControl = async ({
     settings = { ...settings, checkIntervalMinutes: minutes }
     await writeMonitorSettings(settingsFile, settings)
     onIntervalChange(minutes)
+  }
+
+  const setMasterActive = async (active: boolean): Promise<void> => {
+    settings = { ...settings, masterActive: active }
+    await writeMonitorSettings(settingsFile, settings)
+    onIntervalChange(settings.checkIntervalMinutes)
+  }
+
+  const setProductEnabled = async (asinInput: string, active: boolean): Promise<void> => {
+    const asin = asinInput.toUpperCase()
+    if (!products.some((product) => product.asin === asin)) throw new Error(`Producto no configurado: ${asin}`)
+    settings = { ...settings, enabledProducts: { ...settings.enabledProducts, [asin]: active } }
+    await writeMonitorSettings(settingsFile, settings)
+    onIntervalChange(settings.checkIntervalMinutes)
   }
 
   const server = createServer(async (request, response) => {
@@ -102,9 +118,7 @@ export const startMonitorControl = async ({
 
     if (request.method === "POST" && request.url === "/master") {
       const payload = JSON.parse(await readBody(request)) as { active?: unknown }
-      settings = { ...settings, masterActive: Boolean(payload.active) }
-      await writeMonitorSettings(settingsFile, settings)
-      onIntervalChange(settings.checkIntervalMinutes)
+      await setMasterActive(Boolean(payload.active))
       sendJson(request, response, 200, settings)
       return
     }
@@ -112,12 +126,13 @@ export const startMonitorControl = async ({
     const productMatch = request.url?.match(/^\/products\/([A-Z0-9]{10})$/i)
     if (request.method === "POST" && productMatch) {
       const asin = productMatch[1]!.toUpperCase()
-      if (!products.some((product) => product.asin === asin)) { sendJson(request, response, 404, { error: "Producto no configurado" }); return }
       const payload = JSON.parse(await readBody(request)) as { active?: unknown }
-      settings = { ...settings, enabledProducts: { ...settings.enabledProducts, [asin]: Boolean(payload.active) } }
-      await writeMonitorSettings(settingsFile, settings)
-      onIntervalChange(settings.checkIntervalMinutes)
-      sendJson(request, response, 200, settings)
+      try {
+        await setProductEnabled(asin, Boolean(payload.active))
+        sendJson(request, response, 200, settings)
+      } catch (error) {
+        sendJson(request, response, 404, { error: error instanceof Error ? error.message : "Producto no configurado" })
+      }
       return
     }
 
@@ -139,6 +154,8 @@ export const startMonitorControl = async ({
     get masterActive() { return settings.masterActive },
     isProductEnabled: (asin) => settings.enabledProducts[asin] !== false,
     setCheckIntervalMinutes,
+    setMasterActive,
+    setProductEnabled,
     close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
   }
 }

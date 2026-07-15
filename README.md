@@ -86,6 +86,24 @@ Prueba Telegram sin consultar Amazon:
 pnpm telegram:test
 ```
 
+Comandos disponibles desde el chat autorizado del bot:
+
+```text
+/estado          estado general, intervalo y productos
+/1min            revisar cada minuto
+/5min            revisar cada cinco minutos
+/pausar_todo     detener las consultas de todos los productos
+/reanudar_todo   reanudar las consultas
+/pausar1         pausar el primer producto
+/reanudar1       reanudar el primer producto
+/pausar2         pausar el segundo producto
+/reanudar2       reanudar el segundo producto
+/ayuda           mostrar los comandos disponibles
+```
+
+También se puede indicar el ASIN, por ejemplo `/pausar B0H78BB9TY`. Un comando
+desconocido responde con ayuda y no detiene el monitor.
+
 Ejecuta una sola revisión:
 
 ```bash

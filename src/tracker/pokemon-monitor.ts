@@ -364,8 +364,13 @@ const runWatchMode = async (config: MonitorConfig): Promise<void> => {
   })
   const telegramControl = startTelegramControl({
     stateFile: config.telegramControlStateFile,
+    products: config.products,
     getInterval: () => checkIntervalMinutes,
+    getMasterActive: () => control.masterActive,
+    isProductEnabled: control.isProductEnabled,
     setInterval: control.setCheckIntervalMinutes,
+    setMasterActive: control.setMasterActive,
+    setProductEnabled: control.setProductEnabled,
   })
 
   const requestStop = () => {
